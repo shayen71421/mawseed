@@ -59,12 +59,33 @@ export function predatorPose(e){
  }
 }
 export const moves={
- amoeba:'engulf',colony:'divide',fish:'snap',lungfish:'heave',spider:'silk',bird:'stoop',ape:'hammer',
+ amoeba:'engulf',colony:'divide',fish:'snap',lungfish:'heave',spider:'silk',bird:'stoop',ape:'hammer',human:'hammer',
  bee:'sting',cleaner:'pluck',worm:'coil',snail:'crush',sapling:'root',tree:'vine'
 }
 export function playerPose(game,t){
  if(game.defeat){const u=ease(clamp01((t-game.defeat.t)/.78)),aquatic=['amoeba','colony','fish','cleaner','lungfish'].includes(game.hero.form);return {roll:u*(aquatic?1.67:1.25),pitch:u*(aquatic?.18:.55),stretch:1-.28*u,lift:-.24*u}}
  if(game.dodge&&t-game.dodge.t<.31){const u=clamp01((t-game.dodge.t)/.31);return {roll:Math.sin(Math.PI*u)*game.dodge.side*.83,pitch:-Math.sin(Math.PI*u)*.22,stretch:1+.14*Math.sin(Math.PI*u)}}
+ const rite=game.rite,age=rite?t-rite.t:0
+ if(rite?.kind==='knap'){
+  const strike=rite.lastHit===null?0:Math.max(0,1-(t-rite.lastHit)/.45)
+  return {arm:.55+1.25*strike,offArm:.65,pitch:.23,roll:-.08*strike}
+ }
+ if(rite?.kind==='seedfall')return {bend:.38*Math.min(1,age/2),pitch:.09*Math.min(1,age/2)}
+ if(rite?.kind==='human'&&game.hero.form==='ape')return {arm:.9,offArm:.7,pitch:.23-.24*Math.min(1,age/1.35)}
+ if(game.hero.form==='human'&&!game.defeat&&(!game.swing||t-game.swing.t>=game.swing.duration)){
+  if(rite?.kind==='human'){
+   if(age>=2.45&&age<3.45){
+    const mix=(1+Math.sin((age-2.45)*Math.PI*2))/2
+    return {from:'walk-a',to:'walk-b',mix,plate:mix>.5?'walk-b':'walk-a'}
+   }
+   const stand=Math.max(0,Math.min(1,(age-1.35)/1.1))
+   return {from:'crouch',to:'idle',mix:stand,plate:stand<.55?'crouch':null}
+  }
+  if(game.moving){
+   const motion=game.running?'run':'walk',mix=(1+Math.sin(game.gait||0))/2
+   return {from:motion+'-a',to:motion+'-b',mix,plate:motion+(mix>.5?'-b':'-a')}
+  }
+ }
  const flight=game.flight
  if(flight){
   const u=flight.u,wind=flight.phase==='windup',dive=flight.phase==='dive'

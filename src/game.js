@@ -1,3 +1,5 @@
+import {beginning,plantPath,animalPath,endOfLife,pathOf,loadLineage,bothPaths,availableForms,recordLineage} from './lineage.js'
+import {drawLineageMenu} from './lineage-menu.js'
 import {isFlier,visibleQuarry,chooseQuarry,beginFlight,stepFlight} from './flight.js'
 import {aimSilk,castSilk,stepSilk,silkLength} from './silk.js'
 import {render} from './renderer.js'
@@ -22,12 +24,15 @@ function readRun(){
 const visits={
  bird:{form:'bird',x:2.6,z:1.3,depth:7.6,yaw:1.6,angle:1.6,pitch:.43,zoom:1.03},
  pollinator:{form:'bee',x:2.6,z:1.3,depth:3.8,yaw:1.7,angle:1.6,pitch:.4,zoom:.91},
+ seedfall:{form:'tree',x:3.4,z:1.8,depth:.25,yaw:-.31,angle:.66,pitch:.10,zoom:.88},
+ firsttool:{form:'ape',x:3.4,z:1.8,depth:.25,yaw:-.31,angle:.66,pitch:.12,zoom:.85},
  forest:{form:'ape',x:3.4,z:1.8,depth:.25,yaw:-.31,angle:.66,pitch:.15,zoom:.80},
  spider:{form:'spider',x:2.6,z:1.3,depth:1.2,yaw:-.1,angle:3.05,pitch:-.08,zoom:.94},
  reef:{form:'fish',x:.8,z:34.4,depth:4.3,yaw:-.35,angle:-2.65,pitch:.02,zoom:.93}
 }
 const visitKey=(window.location?.hash||'').slice(1),visit=Object.hasOwn(visits,visitKey)?visits[visitKey]:null
 const savedRun=visit?null:readRun()
+const book=loadLineage(savedRun)
 let saveRevision=savedRun?.revision||0
 const $=id=>document.getElementById(id),keys=new Set(),world=makeWorld(savedRun?.consumed)
 const hero={x:0,z:36,y:0,angle:0,form:'amoeba',player:true,size:scaleOf('amoeba')*.68},partner={x:-4,z:29,y:0,angle:0,form:'amoeba',mode:'scout',timer:24,waypoint:0}
@@ -38,7 +43,7 @@ let checkpoint={x:hero.x,z:hero.z,yaw:0,depth:swimDepth}
 let playing=false,chapter='',health=3,immunity=0,cooldown=0,kills=0,total=0,xp=0,points=0,life=1,clock=0,last=0,signalUntil=0,radioUntil=0,uiAt=0,era=0
 const tips={
  amoeba:'Engulf nearby drifting cells. Your short reach makes positioning matter.',
- colony:'Your larger membrane reaches farther. Each meal expands your colony. Finish the hunt to grow fins.',
+ colony:'Your larger membrane reaches farther. Each meal expands your colony. Finish the hunt to choose a plant or animal life.',
  fish:'Follow a shoal or use Find prey. Match the fish’s depth before biting.',
  lungfish:'Surface to refill your air. Your fins can carry you across wet sand.',
  spider:'G faces a moth. Space casts up to 11 m and reels it down. Press Space again to bite.',
@@ -49,7 +54,8 @@ const tips={
  worm:'Follow the damp bank. Land leeches are within reach from the soil.',
  snail:'Your shell absorbs one predator hit each life as a grazer.',
  sapling:'Use your roots to lash blight spores near the ground.',
- tree:'Lash the last blight spores to release the Canopy Heart’s seeds.'
+ tree:'Clear the blight so your fruit can ripen and release its seeds.',
+ human:'Walk with WASD. Hold B to run or use the Run button. Your handaxe can defend you.'
 }
 let shellGuard=false,formTipUntil=0
 function saveRun(){
@@ -57,17 +63,22 @@ function saveRun(){
  try{
   const last=JSON.parse(localStorage.getItem(SAVE_KEY))
   if((last?.revision||0)!==saveRevision)return
-  const record={revision:saveRevision+1,form:hero.form,kills,total,era,life,checkpoint,learned:[...learned],consumed:world.consumed(),fallen:game.fallen,defeated:!!game.defeat||chapter==='REBIRTH'}
+  book.scores[hero.form]=kills;book.homes[hero.form]={...checkpoint}
+  const record={lineage:recordLineage(book),rite:game.rite?{kind:game.rite.kind,hits:game.rite.hits}:null,deathReason:game.defeat?.reason||null,revision:saveRevision+1,form:hero.form,kills,total,era,life,checkpoint,learned:[...learned],consumed:world.consumed(),fallen:game.fallen,defeated:!!game.defeat||chapter==='REBIRTH'}
   localStorage.setItem(SAVE_KEY,JSON.stringify(record));saveRevision=record.revision
  }catch{}
 }
 function restoreRun(r){
- era=r.era;hero.form=r.form;kills=r.kills;total=r.total;xp=total*10;life=Math.max(1,r.life)+(r.defeated?1:0)
+ era=r.era;hero.form=r.form;kills=r.kills;total=r.total;xp=total*10;life=Math.max(1,r.life)
  for(const id of r.learned)if(traits.some(t=>t.id===id))learned.add(id)
  points=Math.max(0,Math.floor(total/3)-learned.size);game.fallen=!!r.fallen
  checkpoint={...r.checkpoint};hero.x=checkpoint.x;hero.z=checkpoint.z;game.yaw=checkpoint.yaw;swimDepth=checkpoint.depth
  hero.size=growthSize();health=maxHealth();shellGuard=hero.form==='snail';immunity=5
  sync();placeForm(hero.form,true);sync();focusPrey()
+ if(r.defeated){game.defeat={reason:r.deathReason||'Your last life has ended',t:clock-.9};health=0;finishDefeat()}
+ else if(r.rite?.kind==='knap'&&hero.form==='ape'&&!book.crafted)beginRite('knap',r.rite.hits)
+ else if(r.rite?.kind==='human'&&['ape','human'].includes(hero.form)&&availableForms(book).includes('human'))beginRite('human')
+ else if(r.rite?.kind==='seedfall'&&hero.form==='tree')beginRite('seedfall')
 }
 function form(){return forms[hero.form]}
 function maxHealth(){return learned.has('shell')?4:3}
@@ -85,8 +96,8 @@ function nearest(){
  for(const a of game.items){if(!a.live||a===closest)continue;const d=bodyDistance(a);if(d<limit&&clearStrike(hero,a,world.solids)){visible=a;limit=d}}
  return visible||closest
 }
-function quota(){return form().quota+Math.min(3,era)}
-function maturity(){return Math.min(1,kills/quota())}
+function quota(){if(hero.form==='human')return 0;return form().quota+Math.min(3,era)}
+function maturity(){if(hero.form==='human')return 1;return Math.min(1,kills/quota())}
 function growthSize(){return scaleOf(hero.form)*(.68+.32*maturity())}
 function downwardLimit(){return game.firstPerson&&isFlier(hero.form)?1.49:.96}
 function focusPrey(a){
@@ -103,6 +114,7 @@ function focusPrey(a){
  game.pitch=Math.max(-.98,Math.min(downwardLimit(),Math.atan2(eye-a.y-bodySize(a)*.85,Math.hypot(dx,dz)+behind)-base))
 }
 function findAction(){
+ if(game.rite)return
  if(!isFlier(hero.form)){focusPrey();return}
  if(game.flight)return
  const a=chooseQuarry(game,clock,true)
@@ -123,40 +135,100 @@ function guideReadout(){
 function say(s){$('signal').textContent=s;signalUntil=clock+2}
 function radio(text){$('radioText').textContent=text;$('radio').hidden=false;radioUntil=clock+6}
 function updateHUD(){
- const ready=kills>=quota(),f=form();game.huntComplete=ready
+ const f=form(),human=hero.form==='human',end=endOfLife(hero.form),ready=kills>=quota()
+ const resting=end&&ready&&!game.rite&&!game.defeat&&(hero.form!=='tree'||book.seedShed)
+ game.huntComplete=ready
  $('place').textContent=biomeAt(hero.x,hero.z).name;$('form').textContent=f.name
  $('vitals').textContent='Health '+health+' / '+maxHealth()+'   ·   Life '+life
- $('hpbar').max=maxHealth();$('hpbar').value=health
- $('hpbar').classList.toggle('low',health===1)
- $('growth').textContent=(kills>=quota()?'Fully grown':'Growing')+' · '+Math.round(100*growthSize()/scaleOf(hero.form))+'% adult size'
- $('findLabel').textContent=hero.form==='bird'?'Eagle Eye':hero.form==='bee'?'Spot bugs':'Find prey';
- $('findPrey').title=isFlier(hero.form)?'Spot visible prey. Press again to switch target.':'Face nearest prey';
+ $('hpbar').max=maxHealth();$('hpbar').value=health;$('hpbar').classList.toggle('low',health===1)
+ $('growth').textContent=human?'Adult · Human':(ready?'Fully grown':'Growing')+' · '+Math.round(100*growthSize()/scaleOf(hero.form))+'% adult size'
+ $('findLabel').textContent=hero.form==='bird'?'Eagle Eye':hero.form==='bee'?'Spot bugs':'Find prey'
+ $('findPrey').title=isFlier(hero.form)?'Spot visible prey. Press again to switch target.':'Face nearest prey'
  $('findPrey').hidden=ready;$('preyCue').hidden=ready
- $('objectiveTitle').textContent=ready?'EVOLUTION READY':'HUNT'
- $('task').textContent=ready?(hero.form==='tree'?'Release the seeds':'Choose your next form'):'Consume '+quota()+' '+species[f.prey].name
- $('counter').textContent=Math.min(kills,quota())+' / '+quota()+' kills'
+ $('objectiveTitle').textContent=human?'FREE ROAM':ready&&end?'LIFE CYCLE':ready?'ADAPTATION READY':'HUNT'
+ $('task').textContent=human?'Explore the living world':ready&&end?(hero.form==='tree'?'The last seed falls':'The last flight'):ready?(hero.form==='ape'&&!book.crafted&&bothPaths(book)?'Shape your first stone tool':'Choose your next life'):'Consume '+quota()+' '+species[f.prey].name
+ $('counter').textContent=human?'Both paths complete':ready&&end?(hero.form==='tree'?'Fruit scattered across the forest floor':'The canopy grows quiet'):Math.min(kills,quota())+' / '+quota()+' kills'
  $('xp').textContent=xp+' XP · Lv '+(1+Math.floor(total/3))
- $('fill').style.width=Math.min(100,100*kills/quota())+'%';$('points').textContent=points
- $('verb').textContent=hero.form==='spider'&&game.web?.phase==='pinned'?'Bite moth':f.action;$('evolve').hidden=!ready
+ $('fill').style.width=(human?100:Math.min(100,100*kills/quota()))+'%';$('points').textContent=points
+ $('verb').textContent=game.rite?.kind==='knap'?'Strike flint':hero.form==='spider'&&game.web?.phase==='pinned'?'Bite moth':f.action
+ $('evolve').hidden=!ready||end||human||!!game.rite||!!game.defeat
+ $('restBtn').hidden=!resting;$('runBtn').hidden=!human||!!game.rite
  $('cameraBtn').textContent=game.firstPerson?'1st person':'3rd person'
 }
 function button(label,fn){const b=document.createElement('button');b.textContent=label;b.onclick=fn;return b}
 function panel(kind,title,body){
- if(game.defeat&&kind!=='REBIRTH')return
+ if(game.rite||game.defeat&&kind!=='REBIRTH')return
  playing=false;keys.clear();chapter=kind
  $('chapter').textContent=kind;$('heading').textContent=title;$('story').textContent=body
  $('actions').replaceChildren();$('panel').replaceChildren();$('close').hidden=kind==='REBIRTH'
  if(!$('dialog').open)$('dialog').showModal()
 }
 function resume(){if($('dialog').open)$('dialog').close();keys.clear();playing=true;chapter=''}
-function evolve(){
- if(!playing||game.defeat||kills<quota())return
- if(hero.form==='tree'){
-   game.fallen=true;saveRun();panel('CANOPY HEART','The first seedfall','Your fruit splits open. A cloud of golden seeds lifts from the nursery arch. Start a new lineage with the skills your last one earned.')
-   $('actions').append(button('Begin another lineage',()=>{era++;life++;changeForm('amoeba');resume()}));return
+function lineagePanel(choose=false){
+ if(game.rite)return
+ const dead=!!game.defeat
+ const body=dead?(availableForms(book).length===1?'This is your first form. Choose it to begin another life at your checkpoint.':'Choose the form you want to wake up as. Each keeps its own hunt progress.')
+  :choose?'Choose a form to inhabit. Your earlier lives and their progress are remembered.':'Follow both paths to unlock the Toolmaker. A form opens when its preceding life is complete.'
+ panel(dead?'REBIRTH':choose?'EVOLUTION':'LINEAGE',dead?'Choose your next life':choose?'Choose your form':'Your lineage',dead?game.defeat.reason+'. '+body:body)
+ drawLineageMenu($('panel'),book,hero.form,choose?selectForm:null)
+ if(!dead)$('actions').append(button('Return to habitat',resume))
+}
+function selectForm(id){
+ if(!['REBIRTH','EVOLUTION'].includes(chapter)||!availableForms(book).includes(id))return
+ const waking=!!game.defeat
+ if(id==='human'&&!Object.hasOwn(book.scores,'human')){
+  if(waking){game.defeat=null;life++}
+  resume();if(hero.form!=='ape'||waking)changeForm('ape');beginRite('human');return
  }
- panel('EVOLUTION','Choose your next form','Your kills unlocked this adaptation. You can evolve here.')
- for(const next of form().next)$('actions').append(button(forms[next].name,()=>{changeForm(next);resume();say('Evolved into '+forms[next].name)}))
+ if(waking){newLife(id);return}
+ resume();changeForm(id);say('Living as '+forms[id].name)
+}
+function evolve(){
+ if(!playing||game.rite||game.defeat||endOfLife(hero.form)||hero.form==='human'||kills<quota())return
+ if(hero.form==='ape'&&bothPaths(book)&&!book.crafted){
+  panel('TOOLMAKING','Shape a handaxe','Strike the flint three times to shape an edge. The finished tool opens the human form.')
+  $('actions').append(button('Work the flint',()=>{resume();beginRite('knap')}),button('Return to habitat',resume));return
+ }
+ if(hero.form!=='ape'||book.crafted)book.done.add(hero.form)
+ book.scores[hero.form]=kills;saveRun();lineagePanel(true)
+}
+function beginRite(kind,hits=0){
+ game.rite={kind,t:clock,hits:Math.max(0,Math.min(3,Number(hits)||0)),lastHit:hits>=3?clock:null,first:game.firstPerson,yaw:game.yaw,pitch:game.pitch}
+ game.firstPerson=false;game.yaw=Math.atan2(Math.sin(hero.angle+.48),-Math.cos(hero.angle+.48))+Math.PI;game.pitch=.04;game.snap=true
+ keys.clear();updateHUD();saveRun()
+}
+function strikeFlint(){
+ const rite=game.rite
+ if(rite?.kind!=='knap'||rite.hits>=3||clock-(rite.lastHit??-1)<.4)return
+ rite.lastHit=clock;rite.hits++;saveRun()
+}
+function advanceRite(dt){
+ const rite=game.rite,u=clock-rite.t
+ if(rite.kind==='knap'){
+  $('signal').textContent='Knapping · '+rite.hits+' / 3 · Space to strike'
+  if(rite.hits<3||clock-rite.lastHit<.55)return
+  book.crafted=true;book.done.add('ape')
+ }else if(rite.kind==='seedfall'){
+  $('signal').textContent='Seedfall'
+  if(u<3.4)return
+  book.seedShed=true;game.fallen=true
+ }else{
+  $('signal').textContent=u<1.35?'The first tool':'The first human'
+  if(u>=1.35&&hero.form!=='human'){
+   const yaw=game.yaw,pitch=game.pitch;changeForm('human');game.yaw=yaw;game.pitch=pitch
+  }
+  if(u>=2.45&&u<3.45){
+   travel(hero,'human',Math.sin(hero.angle)*dt*.75,Math.cos(hero.angle)*dt*.75,world.solids,swimDepth)
+  }
+  if(u<3.5)return
+ }
+ game.firstPerson=rite.first;game.yaw=rite.yaw;game.pitch=rite.pitch;game.rite=null;game.snap=true;keys.clear();$('signal').textContent=''
+ updateHUD();saveRun()
+ if(rite.kind==='knap'){lineagePanel(true);return}
+ if(rite.kind==='human'){
+  panel('HUMAN','Congratulations — you evolved into a human!','Your stone handaxe is yours to carry. The world is still open to explore.')
+  $('actions').append(button('Explore as Human',resume))
+ }
 }
 function placeForm(next,safe=false){
  const size=bodySize(hero)
@@ -165,16 +237,21 @@ function placeForm(next,safe=false){
  hero.y=playerLevel(next,hero.x,hero.z,swimDepth,size);game.snap=true;return shifted
 }
 function changeForm(next){
+ book.scores[hero.form]=kills;book.homes[hero.form]={...checkpoint}
+ if(!book.first&&pathOf(next))book.first=pathOf(next)
+ const home=book.homes[next]
  game.swing=null;game.dodge=null;game.web=null;game.flight=null;game.sight=null;game.airTarget=null
- hero.form=next;kills=0;hero.size=growthSize();shellGuard=next==='snail';swimDepth=next==='lungfish'?.25:next==='bird'?5:2.4
+ hero.form=next;kills=book.scores[next]??(book.done.has(next)?quota():0);book.scores[next]=kills;hero.size=growthSize();shellGuard=next==='snail';swimDepth=next==='lungfish'?.25:next==='bird'?5:2.4
  reserve=1;exposure=0;game.meal=null;game.guide=null;game.pinnedPrey=null;game.pitch=0
  formTipUntil=clock+7;$('fieldTip').textContent=tips[next];health=maxHealth();cooldown=0;immunity=2
- sync();placeForm(next);sync();focusPrey();guideAt=clock+.18
+ if(home){hero.x=home.x;hero.z=home.z;swimDepth=home.depth;game.yaw=home.yaw}
+ game.restTime=0;game.runToggle=false;$('runBtn').textContent='Run';game.gait=0
+ sync();placeForm(next,true);sync();focusPrey();guideAt=clock+.18
  checkpoint={x:hero.x,z:hero.z,yaw:game.yaw,depth:swimDepth}
  updateHUD();guideReadout();saveRun()
 }
 function skills(){
- if(game.defeat)return
+ if(game.rite||game.defeat)return
  panel('ADAPTATIONS','Skill tree',points+' skill point'+(points===1?'':'s')+' available. Earn one point for every three kills. Each trait costs one point.')
  const grid=document.createElement('div');grid.className='branches'
  for(const branch of ['Predation','Motion','Survival']){
@@ -218,15 +295,16 @@ function chart(canvas,range,large){
  dot(partner,'#97f0fc',large?5:6)
  c.save();c.translate(w/2,h/2);c.rotate(game.yaw);c.beginPath();c.moveTo(0,-9);c.lineTo(6,6);c.lineTo(0,4);c.lineTo(-6,6);c.closePath();c.fillStyle='#ffefd1';c.fill();c.strokeStyle='#183335';c.lineWidth=2;c.stroke();c.restore()
 }
-function atlas(){if(game.defeat)return;panel('EXPLORATION','Habitat atlas','The map follows you. Blue is water, sand marks the shore, and green is land. Gold dots mark prey, red dots mark predators, and cyan marks the lantern scout.')
+function atlas(){if(game.rite||game.defeat)return;panel('EXPLORATION','Habitat atlas','The map follows you. Blue is water, sand marks the shore, and green is land. Gold dots mark prey, red dots mark predators, and cyan marks the lantern scout.')
  const canvas=document.createElement('canvas');canvas.width=520;canvas.height=280;canvas.id='atlas';$('panel').append(canvas);chart(canvas,120,true)
  const p=document.createElement('p');p.textContent='Discovered habitats · '+[...discovered].join(' / ');$('panel').append(p);$('actions').append(button('Return to world',resume))}
-function pause(){if(game.defeat)return;panel('PAUSED','Beneath the roots','WASD moves. Drag the world or use Q/R to turn. F rises and C descends while swimming or flying. Space attacks, Shift dodges, E evolves, T opens skills, M opens the atlas, and V switches camera. Drag vertically or use I/K to look up and down. G faces prey. While flying, press G again to switch prey and Space to strike.')
+function pause(){if(game.rite||game.defeat)return;panel('PAUSED','Beneath the roots','WASD moves. Drag the world or use Q/R to turn. F rises and C descends while swimming or flying. Space attacks, Shift dodges, E evolves, T opens skills, M opens the atlas, and V switches camera. Drag vertically or use I/K to look up and down. G faces prey. While flying, press G again to switch prey and Space to strike.')
  $('actions').append(button('Resume',resume))
  if(visit)$('actions').append(button('Return to title',()=>openVisit('')))
 }
-function switchCamera(){game.firstPerson=!game.firstPerson;if(isFlier(hero.form)&&game.airTarget?.live)focusPrey(game.airTarget);game.snap=true;updateHUD();say(game.firstPerson?'First person · Drag or Q/R to look':'Third person')}
+function switchCamera(){if(game.rite)return;game.firstPerson=!game.firstPerson;if(isFlier(hero.form)&&game.airTarget?.live)focusPrey(game.airTarget);game.snap=true;updateHUD();say(game.firstPerson?'First person · Drag or Q/R to look':'Third person')}
 function attack(){
+ if(game.rite){if(playing)strikeFlint();return}
  if(!playing||game.defeat||game.flight||cooldown>0||clock-(game.dodge?.t??-1)<.31)return
  const duration=learned.has('reflex')?.35:.54
  if(isFlier(hero.form)){
@@ -279,14 +357,14 @@ function landAttack(){
  if(prey.hp>0){say('Hit · '+prey.hp+' health left');return}
  const hostile=Boolean(prey.predator)
  game.meal={x:prey.x,y:prey.y,z:prey.z,angle:prey.angle,type:prey.type,t:clock,hostile,carrier:swing.airHit?hero.form:null}
- world.kill(prey);if(!hostile)kills++
+ world.kill(prey);if(!hostile&&hero.form!=='human')kills++
  total++;xp+=10;guideAt=0
  if(total%3===0)points++
  if(learned.has('heal'))health=Math.min(maxHealth(),health+1)
  say((hostile?'Defeated '+hunts[prey.type].name:'Consumed')+' · +10 XP'+(total%3===0?' · +1 skill point':''));updateHUD();saveRun()
 }
 function dodge(){
- if(!playing||game.defeat||clock<(game.dodge?.ready??0))return
+ if(!playing||game.rite||game.defeat||clock<(game.dodge?.ready??0))return
  const side=Number(keys.has('d'))-Number(keys.has('a')),ahead=Number(keys.has('w'))-Number(keys.has('s'))
  const x=side||ahead?side:1,z=ahead,c=Math.cos(game.yaw),s=Math.sin(game.yaw),length=Math.hypot(x,z)||1
  game.dodge={t:clock,ready:clock+1.85,side:x<0?-1:1,dx:(x*c+z*s)/length,dz:(x*s-z*c)/length}
@@ -300,19 +378,16 @@ function receiveStrike(e,profile){
  if(!health)die(profile.name+' landed '+profile.move)
 }
 function die(reason){
- if(game.defeat)return
+ if(game.defeat||game.rite)return
+ if(endOfLife(hero.form)&&kills>=quota()&&(hero.form==='bird'||book.seedShed))book.done.add(hero.form)
+
  game.defeat={reason,t:clock};game.swing=null;game.dodge=null;game.web=null;game.flight=null;game.sight=null;game.airTarget=null;health=0;keys.clear();updateHUD();saveRun()
 }
-function finishDefeat(){
- panel('REBIRTH',game.defeat.reason,'Your '+form().name+' returns to its evolution checkpoint with its size, hunt progress and skills.')
- $('actions').append(button('Respawn as '+form().name,newLife));saveRun()
-}
-function newLife(){
- game.defeat=null;game.dodge=null;game.swing=null;game.web=null;game.flight=null;game.sight=null;game.airTarget=null
- life++;hero.x=checkpoint.x;hero.z=checkpoint.z;swimDepth=checkpoint.depth;game.yaw=checkpoint.yaw;game.pitch=0
- hero.size=growthSize();health=maxHealth();immunity=5;reserve=1;exposure=0;shellGuard=hero.form==='snail';cooldown=0;damageUntil=0
- game.meal=null;game.impact=null;game.guide=null;game.pinnedPrey=null;guideAt=0
- sync();placeForm(hero.form,true);sync();game.snap=true;updateHUD();resume();saveRun()
+function finishDefeat(){lineagePanel(true);saveRun()}
+function newLife(id=hero.form){
+ if(!game.defeat||!availableForms(book).includes(id))return
+ game.defeat=null;game.environment=null;game.impact=null;damageUntil=0;life++
+ resume();changeForm(id);immunity=5;updateHUD();saveRun()
 }
 function breathe(dt,environment){
  if(environment.depleted)reserve=Math.max(0,reserve-dt/environment.capacity)
@@ -333,7 +408,7 @@ function updateScout(dt){
  if(r.mode==='visit'){
    if(distance(r)>45){radio('The scout has found '+species[form().prey].name+'.');r.mode='scout';r.timer=38;return}
    const d=walkTo(r,r.form,hero.x+2,hero.z-2,10,dt,2.4)
-   if(d<2||r.timer<=0){radio(kills>=quota()?'Your lineage is ready. Open evolution to choose a form.':'Get close before you strike. Your prey is marked gold on the radar.');r.mode='scout';r.timer=40;r.waypoint++}
+   if(d<2||r.timer<=0){radio(hero.form==='human'?'The trail carries on past the grove.':kills>=quota()&&endOfLife(hero.form)?'The seasonal colours are changing.':kills>=quota()?'Your lineage is ready. Open evolution to choose a form.':'Get close before you strike. Your prey is marked gold on the radar.');r.mode='scout';r.timer=40;r.waypoint++}
  }else{
    const route=[[-12,23],[-24,7],[4,-5],[23,19],[13,42]]
    const dest=route[r.waypoint%route.length]
@@ -342,10 +417,12 @@ function updateScout(dt){
  }
 }
 function simulation(dt){
+ if(game.rite){advanceRite(dt);return}
  if(game.defeat){
   if(clock-game.defeat.t>=.8)finishDefeat()
   return
  }
+ if(hero.form==='tree'&&kills>=quota()&&!book.seedShed){beginRite('seedfall');return}
  if(game.swing&&!game.swing.resolved&&clock-game.swing.t>=game.swing.duration*.39)landAttack()
 
  cooldown=Math.max(0,cooldown-dt);immunity=Math.max(0,immunity-dt)
@@ -354,7 +431,10 @@ function simulation(dt){
  game.pitch=Math.max(-.98,Math.min(downwardLimit(),game.pitch+dt*(Number(keys.has('k'))-Number(keys.has('i')))*1.25))
  const side=Number(keys.has('d'))-Number(keys.has('a')),forward=Number(keys.has('w')||keys.has('arrowup'))-Number(keys.has('s')||keys.has('arrowdown'))
  const len=Math.hypot(side,forward)||1,c=Math.cos(game.yaw),s=Math.sin(game.yaw),dx=(side*c+forward*s)/len,dz=(side*s-forward*c)/len
- const speed=9*(learned.has('swim')?1.25:1)*(hero.form==='bird'?1.35:1)
+ const human=hero.form==='human',moving=!!(side||forward)
+ game.running=human&&(keys.has('b')||game.runToggle)&&moving
+ const lastX=hero.x,lastZ=hero.z
+ const speed=(human?(game.running?8:4.2):9)*(learned.has('swim')?1.25:1)*(hero.form==='bird'?1.35:1)
  const nextSize=hero.size+(growthSize()-hero.size)*(1-Math.exp(-dt*4.5))
  if(!blocked(hero.x,hero.z,playerLevel(hero.form,hero.x,hero.z,swimDepth,nextSize),nextSize*.6,nextSize*1.65,world.solids))hero.size=nextSize
  const size=bodySize(hero),mode=modeOf(hero.form),bottom=ground(hero.x,hero.z)
@@ -375,6 +455,16 @@ function simulation(dt){
   travel(hero,hero.form,(dx*pace+(evading?evade.dx*burst:0))*dt,(dz*pace+(evading?evade.dz*burst:0))*dt,world.solids,swimDepth)
   if(isFlier(hero.form))swimDepth=hero.y-Math.max(0,ground(hero.x,hero.z))
   if((side||forward)&&(!game.swing||clock-game.swing.t>game.swing.duration))hero.angle=Math.atan2(dx,dz)
+ }
+ if(human){
+  const dist=Math.hypot(hero.x-lastX,hero.z-lastZ)
+  game.gait=(game.gait||0)+dist*(game.running?4.1:5.3);game.moving=dist>.001
+ }
+ if(endOfLife(hero.form)&&kills>=quota()&&(hero.form==='bird'||book.seedShed)){
+  const resting=keys.has('x')&&!moving&&(hero.form!=='bird'||swimDepth<.8)
+  game.restTime=resting?(game.restTime||0)+dt:0
+  if(keys.has('x')&&hero.form==='bird'&&swimDepth>=.8)say('Descend to a quiet perch')
+  if(resting){say('Resting…');if(game.restTime>=4){die('A life fully lived');return}}
  }
  const environment=respiration(hero.form,hero.x,hero.y,hero.z,size)
  if(environment.wet&&Math.abs(playerLevel(hero.form,hero.x,hero.z,swimDepth,size)-hero.y)>.1)swimDepth=Math.max(.2,environment.depth)
@@ -430,8 +520,10 @@ $('start').onclick=()=>{
  enterWorld()
  if(savedRun)restoreRun(savedRun)
  else focusPrey()
- updateHUD();if(savedRun){say('Evolution checkpoint restored');guideReadout();saveRun()}else radio('Green drifters ahead. Swim close and press Space to engulf one.')
+ updateHUD();if(savedRun){if(!game.defeat&&!game.rite)say('Evolution checkpoint restored');guideReadout();saveRun()}else radio('Green drifters ahead. Swim close and press Space to engulf one.')
 }
+$('seedVisit').onclick=()=>openVisit('seedfall')
+$('toolVisit').onclick=()=>openVisit('firsttool')
 $('forestVisit').onclick=()=>openVisit('forest')
 $('reefVisit').onclick=()=>openVisit('reef')
 $('birdVisit').onclick=()=>openVisit('bird')
@@ -439,6 +531,12 @@ $('beeVisit').onclick=()=>openVisit('pollinator')
 $('spiderVisit').onclick=()=>openVisit('spider')
 if(visit){
  enterWorld();hero.form=visit.form;hero.x=visit.x;hero.z=visit.z;kills=Math.floor(forms[visit.form].quota*.62)
+ if(['seedfall','firsttool'].includes(visitKey)){
+  const complete=visitKey==='firsttool'?[...beginning,...plantPath,...animalPath]:[...beginning,'sapling']
+  for(const id of complete){book.done.add(id);book.scores[id]=forms[id].quota}
+  kills=forms[hero.form].quota;book.first='plant';book.seedShed=visitKey==='firsttool'
+ }
+ book.scores[hero.form]=kills
  total=kills;xp=10*kills;points=Math.floor(kills/3)
  swimDepth=visit.depth;game.yaw=visit.yaw;hero.angle=visit.angle;game.pitch=visit.pitch;game.zoom=visit.zoom
  checkpoint={x:hero.x,z:hero.z,yaw:game.yaw,depth:swimDepth}
@@ -446,6 +544,8 @@ if(visit){
  game.guide=nearest();if(hero.form==='spider'||isFlier(hero.form)){focusPrey();$('fieldTip').textContent=tips[hero.form];formTipUntil=clock+15}
  updateHUD();guideReadout();$('visitReturn').hidden=false
 }
+$('lineageBtn').onclick=()=>{if(playing&&!game.rite)lineagePanel()}
+$('runBtn').onclick=()=>{game.runToggle=!game.runToggle;$('runBtn').textContent=game.runToggle?'Walk':'Run'}
 $('visitReturn').onclick=()=>openVisit('')
 $('attack').onpointerdown=e=>{e.preventDefault();keys.add(' ');e.currentTarget.setPointerCapture(e.pointerId);attack()};$('attack').onlostpointercapture=()=>keys.delete(' ')
 $('dodge').onclick=dodge
@@ -456,7 +556,8 @@ window.addEventListener('keydown',e=>{
  if(!playing||game.defeat)return
  if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k))e.preventDefault()
  keys.add(k);if(e.repeat)return
- if(k==='shift')dodge();if(k===' ')attack();if(k==='g')findAction();if(k==='e')evolve();if(k==='m')atlas();if(k==='t')skills();if(k==='v')switchCamera();if(k==='escape')pause()
+ if(game.rite){if(k===' ')strikeFlint();return}
+ if(k==='l')lineagePanel();if(k==='shift')dodge();if(k===' ')attack();if(k==='g')findAction();if(k==='e')evolve();if(k==='m')atlas();if(k==='t')skills();if(k==='v')switchCamera();if(k==='escape')pause()
 })
 window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>keys.clear())
 for(const b of document.querySelectorAll('[data-key]')){b.onpointerdown=e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.add(b.dataset.key)};b.onlostpointercapture=()=>keys.delete(b.dataset.key)}
@@ -475,7 +576,7 @@ function frame(timestamp){
  if(playing)simulation(dt)
  if(playing||game.snap)render(game,clock,dt)
  document.body.classList.toggle('hit',clock<damageUntil)
- if(playing&&clock>uiAt){
+ if(playing&&!game.rite&&clock>uiAt){
  $('dodge').disabled=clock<(game.dodge?.ready??0)||!!game.defeat
  const bottom=ground(hero.x,hero.z),env=game.environment||respiration(hero.form,hero.x,hero.y,hero.z,bodySize(hero)),wet=env.wet
  $('depthControls').hidden=env.mode!=='air'&&bottom>=0

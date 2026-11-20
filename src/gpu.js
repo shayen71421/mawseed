@@ -1,6 +1,6 @@
 import * as T from 'three'
 import habitatMeta from '../dist/assets/habitat/habitat.json'
-import {minnow,shiner} from '../dist/assets/fauna/manifest.json'
+import {minnow,shiner,human as humanMeta} from '../dist/assets/fauna/manifest.json'
 import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js'
 import {RoomEnvironment} from 'three/examples/jsm/environments/RoomEnvironment.js'
 import {ground,scaleOf,bodySize} from './physics.js'
@@ -174,7 +174,7 @@ export function bootGPU(container){
   if(!resident||resident.template!==template){
    if(resident)scene.remove(resident.node)
    const node=template.root.clone(true),parts=[]
-   node.traverse(o=>{if(/wing|fin|tail|^arm_|^leg_|^palp_|^grip_|^hallux_|^foot_|^abdomen$|jaw|vine|tendril/i.test(o.name))parts.push({o,base:o.rotation.clone()})})
+   node.traverse(o=>{if((name==='human'&&/^(spine|head|pelvis|shin_|forearm_|hand_)/.test(o.name))||/wing|fin|tail|^arm_|^leg_|^palp_|^grip_|^hallux_|^foot_|^abdomen$|jaw|vine|tendril/i.test(o.name))parts.push({o,base:o.rotation.clone()})})
    const mixer=template.animations.length?new T.AnimationMixer(node):null
    if(mixer)for(const clip of template.animations)mixer.clipAction(clip).play()
    resident={node,template,parts,mixer};residents.set(id,resident);scene.add(node)
@@ -189,11 +189,22 @@ export function bootGPU(container){
   node.position.set(x,y+(Math.sin(t*2.3)*.025+(pose.lift||0))*size,z)
   node.rotation.order='YXZ';node.rotation.set((pose.pitch||0)+Math.abs(step)*.045,angle,(pose.roll||0)+step*.045,'YXZ')
   node.scale.set(size*(pose.wide||1),size/(Math.sqrt(pose.stretch||1)),size*(pose.stretch||1))
+  if(name==='human'&&pose.from){
+   const mix=pose.mix??0
+   const baseY=humanMeta.poseGround[pose.from]||0,endY=humanMeta.poseGround[pose.to]||0
+   node.position.y+=size*(baseY+(endY-baseY)*mix)
+  }
   if(mixer)mixer.setTime(t)
   for(const {o,base} of parts){
    const key=o.name,side=/-1|left/i.test(key)?-1:1
    o.rotation.copy(base)
-   if(/jaw/i.test(key))o.rotation.x+=pose.jaw||0
+   if(name==='human'&&pose.from){
+    const a=humanMeta.jointPoses[pose.from]?.[key],b=humanMeta.jointPoses[pose.to]?.[key],u=pose.mix??0
+    o.rotation.x+=(a?.[0]||0)*(1-u)+(b?.[0]||0)*u
+    o.rotation.y+=(a?.[1]||0)*(1-u)+(b?.[1]||0)*u
+    o.rotation.z+=(a?.[2]||0)*(1-u)+(b?.[2]||0)*u
+   }else if(name==='human'&&!/^arm_/.test(key))continue
+   else if(/jaw/i.test(key))o.rotation.x+=pose.jaw||0
    else if(/^arm_/.test(key)){o.rotation.x-=(side>0?(pose.arm||0):(pose.offArm??pose.arm??0));o.rotation.z+=side*(pose.spread||0);if(!pose.arm)o.rotation.x+=step*.44*side}
    else if(key==='abdomen')o.rotation.x+=pose.abdomen||0
    else if(/^wingtip_/.test(key))o.rotation.y+=side*(pose.tip||0)

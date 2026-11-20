@@ -58,7 +58,7 @@ def export(m,kind,out,raster):
    doc['nodes'][i]['translation']=(m.pivots[child]-m.pivots[parent]).tolist()
  doc['buffers'][0]['byteLength']=len(buf);j=json.dumps(doc,separators=(',',':')).encode();j+=b' '*((-len(j))%4)
  (out/(kind+'.glb')).write_bytes(struct.pack('<4sII',b'glTF',2,28+len(j)+len(buf))+struct.pack('<I4s',len(j),b'JSON')+j+struct.pack('<I4s',len(buf),b'BIN\0')+buf)
- size=384 if kind in ('ape','bird') else 320 if kind=='bee' else 288 if kind in ('amoeba','colony','fish','hunter') else 192
+ size=384 if kind in ('ape','bird','human') else 320 if kind=='bee' else 288 if kind in ('amoeba','colony','fish','hunter') else 192
  resolution=size*2
  y=(V[:,1].max()+V[:,1].min())*.5
  center=f32([0,y,0]);rad=np.linalg.norm(V[:,[0,2]],axis=1).max()
@@ -89,6 +89,7 @@ def export(m,kind,out,raster):
   atlas.save(out/(name+'.webp'),quality=93,method=4)
  sheet(kind,V,N)
  poses=getattr(m,'poses',{})
+ ground_offsets={}
  if poses:
   from scipy.spatial.transform import Rotation
   for name,rotation in poses.items():
@@ -102,5 +103,9 @@ def export(m,kind,out,raster):
    vertices=[];normals=[]
    for v,n,_,_,_,group in m.parts:
     T=resolve(group);vertices.append(v@T[:3,:3].T+T[:3,3]);normals.append(n@T[:3,:3].T)
-   sheet(kind+'-'+name,f32(np.concatenate(vertices)),f32(np.concatenate(normals)))
- return {**({'poses':{p:kind+'-'+p for p in poses}} if poses else {}),'asset':kind,'span':span,'centerY':float(y),'tile':size,'views':8,'nodes':list(groups),'vertices':len(V),'triangles':len(F)}
+   posed=f32(np.concatenate(vertices))
+   if getattr(m,'ground_poses',False):
+    ground_offsets[name]=float(V[:,1].min()-posed[:,1].min())
+    posed[:,1]+=ground_offsets[name]
+   sheet(kind+'-'+name,posed,f32(np.concatenate(normals)))
+ return {**({'poseGround':ground_offsets,'jointPoses':poses} if ground_offsets else {}),**({'poses':{p:kind+'-'+p for p in poses}} if poses else {}),'asset':kind,'span':span,'centerY':float(y),'tile':size,'views':8,'nodes':list(groups),'vertices':len(V),'triangles':len(F)}

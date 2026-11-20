@@ -10,19 +10,20 @@ export const habitats=[
 ]
 export function habitat(x,z){let best=habitats[0],distance=Infinity;for(const h of habitats){let d=(h.x-x)**2+(h.z-z)**2;if(d<distance){best=h;distance=d}}return best}
 export const forms={
- amoeba:{name:'Amoeba',prey:'microbe',quota:8,action:'Engulf',next:['colony']},
- colony:{name:'Cell colony',prey:'microbe',quota:12,action:'Engulf',next:['fish']},
- fish:{name:'Glassfin',prey:'minnow',quota:14,action:'Bite',next:['lungfish']},
- lungfish:{name:'Lungfish',prey:'minnow',quota:14,action:'Snap',next:['spider','bee']},
- spider:{name:'Silk hunter',prey:'moth',quota:10,action:'Cast web',next:['bird']},
- bird:{name:'Canopy bird',prey:'moth',quota:12,action:'Talon dive',next:['ape']},
- ape:{name:'Toolmaker',prey:'mite',quota:12,action:'Strike',next:['bee']},
- bee:{name:'Pollinator',prey:'mite',quota:10,action:'Drop sting',next:['cleaner','sapling']},
- cleaner:{name:'Cleaner fish',prey:'leech',quota:12,action:'Pluck',next:['worm']},
- worm:{name:'Earthworm',prey:'leech',quota:10,action:'Pinch',next:['snail']},
- snail:{name:'Shell grazer',prey:'mite',quota:12,action:'Crush',next:['sapling']},
- sapling:{name:'Rooted shoot',prey:'blight',quota:12,action:'Root lash',next:['tree']},
- tree:{name:'Fruit tree',prey:'blight',quota:16,action:'Vine lash',next:[]}
+ amoeba:{name:'Amoeba',prey:'microbe',quota:8,action:'Engulf'},
+ colony:{name:'Cell colony',prey:'microbe',quota:12,action:'Engulf'},
+ fish:{name:'Glassfin',prey:'minnow',quota:14,action:'Bite'},
+ lungfish:{name:'Lungfish',prey:'minnow',quota:14,action:'Snap'},
+ spider:{name:'Silk hunter',prey:'moth',quota:10,action:'Cast web'},
+ bird:{name:'Canopy bird',prey:'moth',quota:12,action:'Talon dive'},
+ ape:{name:'Toolmaker',prey:'mite',quota:12,action:'Strike'},
+ bee:{name:'Pollinator',prey:'mite',quota:10,action:'Drop sting'},
+ cleaner:{name:'Cleaner fish',prey:'leech',quota:12,action:'Pluck'},
+ worm:{name:'Earthworm',prey:'leech',quota:10,action:'Pinch'},
+ snail:{name:'Shell grazer',prey:'mite',quota:12,action:'Crush'},
+ sapling:{name:'Rooted shoot',prey:'blight',quota:12,action:'Root lash'},
+ human:{name:'Human',prey:'mite',quota:0,action:'Handaxe'},
+ tree:{name:'Fruit tree',prey:'blight',quota:16,action:'Vine lash'}
 }
 export const species={
  microbe:{label:'Drifter',name:'drifter cells',color:'#c9f68a',hp:1,speed:1.8},

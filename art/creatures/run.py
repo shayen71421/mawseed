@@ -2,6 +2,7 @@ from build import *
 from export import export
 from predators import pike, mantis, shiner
 from lantern import lantern
+from human import forager
 import os
 try:from land import land
 except ImportError:land=None
@@ -9,12 +10,16 @@ for name in sys.argv[1:]:
  model=Sculpt()
  if name in ['amoeba','colony','microbe']:cell(model,name)
  elif name in ['fish','minnow','hunter','cleaner','lungfish']:fish(model,name)
+ elif name=='human':forager(model)
  elif name=='lantern':lantern(model)
  elif name=='shiner':shiner(model)
  elif name=='pike':pike(model)
  elif name=='mantis':mantis(model)
  else:land(model,name)
  record=export(model,name,OUT,RASTER)
+ if name=='human':
+  from human import embed_hide
+  embed_hide(model,OUT/'human.glb')
  if name=='ape':
   from macaque import embed_coat
   embed_coat(model,OUT/'ape.glb')

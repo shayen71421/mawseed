@@ -28,6 +28,144 @@
     mod
   ));
 
+  // src/lineage.js
+  var beginning = ["amoeba", "colony"];
+  var plantPath = ["sapling", "tree"];
+  var animalPath = ["fish", "cleaner", "lungfish", "worm", "snail", "spider", "bee", "bird"];
+  var finalPath = ["ape", "human"];
+  var stages = [...beginning, ...plantPath, ...animalPath, ...finalPath];
+  var groups = [["Origin", beginning], ["Plant life", plantPath], ["Animal life", animalPath], ["Toolmaking", finalPath]];
+  var endOfLife = (id) => id === "bird" || id === "tree";
+  var pathOf = (id) => plantPath.includes(id) ? "plant" : animalPath.includes(id) ? "animal" : null;
+  var valid = (id) => stages.includes(id);
+  var score = (n) => Number.isSafeInteger(n) && n >= 0 ? n : 0;
+  function loadLineage(save) {
+    const raw = save?.lineage;
+    const book2 = { first: null, done: /* @__PURE__ */ new Set(), scores: { amoeba: 0 }, homes: {}, seedShed: false, crafted: false };
+    if (raw) {
+      book2.first = ["plant", "animal"].includes(raw.first) ? raw.first : null;
+      for (const id of Array.isArray(raw.done) ? raw.done : []) if (valid(id)) book2.done.add(id);
+      for (const [id, n] of Object.entries(raw.scores || {})) if (valid(id)) book2.scores[id] = score(n);
+      for (const [id, h] of Object.entries(raw.homes || {})) if (valid(id) && h && ["x", "z", "depth", "yaw"].every((k) => Number.isFinite(h[k]))) book2.homes[id] = { x: h.x, z: h.z, depth: h.depth, yaw: h.yaw };
+      book2.seedShed = !!raw.seedShed;
+      book2.crafted = !!raw.crafted;
+    } else if (save) {
+      if (save.form !== "amoeba") book2.done.add("amoeba");
+      if (!beginning.includes(save.form)) book2.done.add("colony");
+      if (![...beginning, "fish"].includes(save.form)) book2.done.add("fish");
+      if (![...beginning, "fish", "lungfish"].includes(save.form)) book2.done.add("lungfish");
+      if (["bird", "ape"].includes(save.form)) book2.done.add("spider");
+      if (save.form === "ape") book2.done.add("bird");
+      if (["cleaner", "worm", "snail"].includes(save.form)) book2.done.add("bee");
+      if (["worm", "snail"].includes(save.form)) book2.done.add("cleaner");
+      if (save.form === "snail") book2.done.add("worm");
+      if (save.form === "tree" || save.fallen) book2.done.add("sapling");
+      if (save.fallen) {
+        book2.done.add("tree");
+        book2.seedShed = true;
+      }
+      book2.first = pathOf(save.form);
+    }
+    if (save && valid(save.form)) {
+      book2.scores[save.form] = score(save.kills);
+      book2.homes[save.form] = save.checkpoint;
+    }
+    return book2;
+  }
+  function bothPaths(book2) {
+    return [...plantPath, ...animalPath].every((id) => book2.done.has(id));
+  }
+  function availableForms(book2) {
+    const options = /* @__PURE__ */ new Set([...Object.keys(book2.scores), ...book2.done]);
+    if (book2.done.has("amoeba")) options.add("colony");
+    if (book2.done.has("colony")) {
+      if (book2.first !== "animal" || book2.done.has("bird")) options.add("sapling");
+      if (book2.first !== "plant" || book2.done.has("tree")) options.add("fish");
+    }
+    for (const path of [plantPath, animalPath]) for (let i = 1; i < path.length; i++) if (book2.done.has(path[i - 1])) options.add(path[i]);
+    if (bothPaths(book2)) options.add("ape");
+    if (bothPaths(book2) && book2.done.has("ape") && book2.crafted) options.add("human");
+    return stages.filter((id) => options.has(id));
+  }
+  function recordLineage(book2) {
+    return { ...book2, done: [...book2.done] };
+  }
+
+  // src/ecology.js
+  var habitats = [
+    { name: "Primordial lagoon", x: 0, z: 42, tint: "#348993", accent: "#77ede4" },
+    { name: "Glassfin reef", x: 82, z: 85, tint: "#477ea3", accent: "#f8a59f" },
+    { name: "Silkwood hollow", x: -77, z: 5, tint: "#716389", accent: "#b5a2ff" },
+    { name: "Amber meadow", x: 85, z: -40, tint: "#949755", accent: "#ffd07d" },
+    { name: "Seedfall grove", x: 0, z: -88, tint: "#58795a", accent: "#bdd87c" },
+    { name: "Spore marsh", x: -87, z: 102, tint: "#487a70", accent: "#a6f0ba" }
+  ];
+  var forms = {
+    amoeba: { name: "Amoeba", prey: "microbe", quota: 8, action: "Engulf" },
+    colony: { name: "Cell colony", prey: "microbe", quota: 12, action: "Engulf" },
+    fish: { name: "Glassfin", prey: "minnow", quota: 14, action: "Bite" },
+    lungfish: { name: "Lungfish", prey: "minnow", quota: 14, action: "Snap" },
+    spider: { name: "Silk hunter", prey: "moth", quota: 10, action: "Cast web" },
+    bird: { name: "Canopy bird", prey: "moth", quota: 12, action: "Talon dive" },
+    ape: { name: "Toolmaker", prey: "mite", quota: 12, action: "Strike" },
+    bee: { name: "Pollinator", prey: "mite", quota: 10, action: "Drop sting" },
+    cleaner: { name: "Cleaner fish", prey: "leech", quota: 12, action: "Pluck" },
+    worm: { name: "Earthworm", prey: "leech", quota: 10, action: "Pinch" },
+    snail: { name: "Shell grazer", prey: "mite", quota: 12, action: "Crush" },
+    sapling: { name: "Rooted shoot", prey: "blight", quota: 12, action: "Root lash" },
+    human: { name: "Human", prey: "mite", quota: 0, action: "Handaxe" },
+    tree: { name: "Fruit tree", prey: "blight", quota: 16, action: "Vine lash" }
+  };
+  var species = {
+    microbe: { label: "Drifter", name: "drifter cells", color: "#c9f68a", hp: 1, speed: 1.8 },
+    shiner: { label: "Silver shiner", name: "silver shiners", color: "#c6dede", hp: 2, speed: 3.6 },
+    minnow: { label: "Glass minnow", name: "shoal fish", color: "#ffb585", hp: 3, speed: 3.1 },
+    moth: { label: "Lantern moth", name: "lantern moths", color: "#ffe098", hp: 2, speed: 2.7 },
+    mite: { label: "Red mite", name: "red mites", color: "#fa9279", hp: 2, speed: 3.4 },
+    leech: { label: "Marsh leech", name: "marsh leeches", color: "#c4a1e8", hp: 2, speed: 2.5 },
+    blight: { label: "Blight spore", name: "blight spores", color: "#f39aab", hp: 3, speed: 1.9 }
+  };
+  var traits = [
+    { id: "bite", branch: "Predation", name: "Serrated bite", desc: "+1 damage per strike" },
+    { id: "reach", branch: "Predation", name: "Lunging strike", desc: "Extend strike range by 40%", parent: "bite" },
+    { id: "swim", branch: "Motion", name: "Streamlined body", desc: "Move 25% faster" },
+    { id: "reflex", branch: "Motion", name: "Quick reflex", desc: "Strike again 35% sooner", parent: "swim" },
+    { id: "shell", branch: "Survival", name: "Tough membrane", desc: "Gain one heart immediately" },
+    { id: "heal", branch: "Survival", name: "Regeneration", desc: "Recover one heart after each kill", parent: "shell" }
+  ];
+
+  // src/lineage-menu.js
+  function element(tag, cls, text) {
+    const node = document.createElement(tag);
+    node.className = cls;
+    if (text) node.textContent = text;
+    return node;
+  }
+  function drawLineageMenu(host, book2, current, select) {
+    const open = new Set(availableForms(book2)), grid = element("div", "lineage-grid");
+    for (const [title, ids] of groups) {
+      const group = element("section", "lineage-group");
+      group.append(element("h3", "", title));
+      for (const id of ids) {
+        const lived = Object.hasOwn(book2.scores, id) || book2.done.has(id), accessible = open.has(id);
+        const state = !accessible ? "Locked" : id === current ? "Current form" : book2.done.has(id) ? "Completed" : lived ? "Previously lived" : "Newly unlocked";
+        const row = element(select ? "button" : "div", "lineage-form " + (!accessible ? "locked" : id === current ? "current" : lived ? "lived" : "new"));
+        row.append(element("span", "form-name", forms[id].name), element("small", "form-state", state));
+        if (select) {
+          row.disabled = !accessible;
+          row.onclick = () => {
+            if (accessible) select(id);
+          };
+        }
+        group.append(row);
+      }
+      grid.append(group);
+    }
+    host.append(grid);
+    const completed = [...plantPath, ...animalPath].filter((id) => book2.done.has(id)).length;
+    host.append(element("p", "lineage-foot", completed + " / 10 path stages complete \xB7 Toolmaker opens after both paths."));
+  }
+
   // src/physics.js
   function ground(x, z) {
     const bend = 32 + 14 * Math.sin(x * 0.029) + 5 * Math.sin(x * 0.071);
@@ -162,7 +300,7 @@
   }
   function aimSilk(hero2, items, solids, yaw, pitch, length) {
     const start = thorax(hero2);
-    let best = null, score = Infinity;
+    let best = null, score2 = Infinity;
     for (const a of items) {
       if (!a.live || a.type !== "moth") continue;
       const end = thorax(a), dx = end.x - start.x, dz = end.z - start.z, dy = end.y - start.y, d = separation(start, end);
@@ -172,9 +310,9 @@
       const elevation = Math.abs(Math.atan2(dy, horizontal) + pitch);
       if (azimuth > 0.87 || elevation > 1.49 && horizontal > 0.8) continue;
       const rank = azimuth * 5 + elevation * 1.4 + d * 0.19;
-      if (rank < score && silkPathClear(start, end, solids)) {
+      if (rank < score2 && silkPathClear(start, end, solids)) {
         best = a;
-        score = rank;
+        score2 = rank;
       }
     }
     return best;
@@ -820,6 +958,7 @@
     spider: "silk",
     bird: "stoop",
     ape: "hammer",
+    human: "hammer",
     bee: "sting",
     cleaner: "pluck",
     worm: "coil",
@@ -835,6 +974,27 @@
     if (game2.dodge && t - game2.dodge.t < 0.31) {
       const u2 = clamp01((t - game2.dodge.t) / 0.31);
       return { roll: Math.sin(Math.PI * u2) * game2.dodge.side * 0.83, pitch: -Math.sin(Math.PI * u2) * 0.22, stretch: 1 + 0.14 * Math.sin(Math.PI * u2) };
+    }
+    const rite = game2.rite, age = rite ? t - rite.t : 0;
+    if (rite?.kind === "knap") {
+      const strike = rite.lastHit === null ? 0 : Math.max(0, 1 - (t - rite.lastHit) / 0.45);
+      return { arm: 0.55 + 1.25 * strike, offArm: 0.65, pitch: 0.23, roll: -0.08 * strike };
+    }
+    if (rite?.kind === "seedfall") return { bend: 0.38 * Math.min(1, age / 2), pitch: 0.09 * Math.min(1, age / 2) };
+    if (rite?.kind === "human" && game2.hero.form === "ape") return { arm: 0.9, offArm: 0.7, pitch: 0.23 - 0.24 * Math.min(1, age / 1.35) };
+    if (game2.hero.form === "human" && !game2.defeat && (!game2.swing || t - game2.swing.t >= game2.swing.duration)) {
+      if (rite?.kind === "human") {
+        if (age >= 2.45 && age < 3.45) {
+          const mix2 = (1 + Math.sin((age - 2.45) * Math.PI * 2)) / 2;
+          return { from: "walk-a", to: "walk-b", mix: mix2, plate: mix2 > 0.5 ? "walk-b" : "walk-a" };
+        }
+        const stand = Math.max(0, Math.min(1, (age - 1.35) / 1.1));
+        return { from: "crouch", to: "idle", mix: stand, plate: stand < 0.55 ? "crouch" : null };
+      }
+      if (game2.moving) {
+        const motion = game2.running ? "run" : "walk", mix2 = (1 + Math.sin(game2.gait || 0)) / 2;
+        return { from: motion + "-a", to: motion + "-b", mix: mix2, plate: motion + (mix2 > 0.5 ? "-b" : "-a") };
+      }
     }
     const flight = game2.flight;
     if (flight) {
@@ -901,12 +1061,154 @@
     }
   }
 
+  // src/lineage-art.js
+  var tau = Math.PI * 2;
+  var clamp2 = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  function seedfall(draw, ctx3, hero2, size, age) {
+    for (let i = 0; i < 7; i++) {
+      const branch = 2 * i, height2 = branch / 13;
+      const release = age - (0.13 + i * 3 % 7 * 0.19);
+      if (release < 0) continue;
+      const branchAngle = branch * 2.4;
+      const direction = branchAngle - hero2.angle;
+      const length = 0.94 * (1 - 0.57 * height2);
+      const baseY = 2.5 * (0.39 + 0.55 * height2) + 0.34 * (1 - 0.32 * height2) - 0.073;
+      const landing = Math.sqrt(2 * baseY / 3.6);
+      const fall = Math.min(release, landing);
+      const roll = 1 - Math.exp(-Math.max(0, release - landing) * 4);
+      const along = length + 0.17 * fall + roll * 0.2;
+      const x = hero2.x + size * (Math.cos(direction) * along + 0.035 * Math.sin(hero2.angle));
+      const z = hero2.z + size * (Math.sin(direction) * along + 0.035 * Math.cos(hero2.angle));
+      const floor = ground(x, z) + size * 0.085;
+      const after = Math.max(0, release - landing);
+      const bounce = size * 0.11 * Math.max(0, 1 - 3.1 * after) * Math.abs(Math.sin(13 * after));
+      const y = Math.max(floor, hero2.y + size * (baseY - 1.8 * fall * fall)) + bounce;
+      const position = draw(x, y, z);
+      if (position) {
+        const r = clamp2(size * 0.094 * position.k, 1.15, 12);
+        const angle2 = 0.25 * Math.sin(i * 5) + fall * (i % 2 ? 0.94 : -1.12) + roll * 0.4;
+        ctx3.save();
+        ctx3.translate(position.x, position.y);
+        ctx3.rotate(angle2);
+        const skin = ctx3.createRadialGradient(-0.29 * r, -0.36 * r, 0, 0, 0, 1.2 * r);
+        skin.addColorStop(0, "#f5c27e");
+        skin.addColorStop(0.47, "#d88954");
+        skin.addColorStop(1, "#925443");
+        ctx3.fillStyle = skin;
+        ctx3.beginPath();
+        ctx3.ellipse(0, 0, r * 0.87, r * 1.04, 0, 0, tau);
+        ctx3.fill();
+        ctx3.strokeStyle = "#938361";
+        ctx3.lineWidth = Math.max(0.65, r * 0.15);
+        ctx3.beginPath();
+        ctx3.moveTo(0, -0.91 * r);
+        ctx3.quadraticCurveTo(-0.15 * r, -1.34 * r, 0.27 * r, -1.48 * r);
+        ctx3.stroke();
+        ctx3.restore();
+      }
+      const drift = release - 0.22;
+      if (drift < 0) continue;
+      const angle = direction + 0.7 * Math.sin(drift * 3 + i);
+      const radial = length + 0.27 + drift * 0.44;
+      const sx = hero2.x + size * radial * Math.cos(angle), sz = hero2.z + size * radial * Math.sin(angle);
+      const sy = Math.max(ground(sx, sz) + size * 0.027, hero2.y + size * (baseY - 0.44 * drift - 0.3 * drift * drift));
+      const seed = draw(sx, sy, sz);
+      if (seed) {
+        const r = clamp2(seed.k * size * 0.051, 0.8, 5.5), rotation = i + drift * 4.2;
+        ctx3.save();
+        ctx3.translate(seed.x, seed.y);
+        ctx3.rotate(rotation);
+        ctx3.fillStyle = "rgba(217,204,139,.88)";
+        ctx3.beginPath();
+        ctx3.moveTo(0, 0);
+        ctx3.quadraticCurveTo(0.58 * r, -1.85 * r, 2.86 * r, -1.14 * r);
+        ctx3.quadraticCurveTo(1.95 * r, -0.14 * r, 0, 0);
+        ctx3.fill();
+        ctx3.fillStyle = "#8d603b";
+        ctx3.beginPath();
+        ctx3.ellipse(0, 0, r * 0.68, r * 0.43, -0.28, 0, tau);
+        ctx3.fill();
+        ctx3.restore();
+      }
+    }
+  }
+  function knapping(draw, ctx3, hero2, size, rite, elapsed) {
+    if (!(elapsed >= 0 && elapsed < 0.54) || !rite.hits) return;
+    const yaw = hero2.angle, hand = rite.contact || {
+      x: hero2.x + size * (0.7 * Math.cos(yaw) + 0.49 * Math.sin(yaw)),
+      y: hero2.y + size * 0.9,
+      z: hero2.z + size * (0.49 * Math.cos(yaw) - 0.7 * Math.sin(yaw))
+    };
+    ctx3.globalAlpha *= (1 - elapsed / 0.54) ** 0.66;
+    for (let i = 0; i < 8; i++) {
+      const a = yaw + 1.73 * rite.hits + i * 2.39996, speed = 0.56 + 0.12 * (i * 3 % 7);
+      const x = hand.x + size * elapsed * speed * Math.cos(a);
+      const z = hand.z + size * elapsed * speed * Math.sin(a);
+      const y = hand.y + size * elapsed * (1.4 + 0.16 * (i % 5) - 5.1 * elapsed);
+      if (y < ground(x, z)) continue;
+      const p = draw(x, y, z);
+      if (!p) continue;
+      const width2 = clamp2(p.k * size * (0.014 + 5e-3 * (i % 3)), 0.78, 4.2);
+      ctx3.save();
+      ctx3.translate(p.x, p.y);
+      ctx3.rotate(a + elapsed * (9 + i));
+      ctx3.beginPath();
+      ctx3.moveTo(-width2, -0.31 * width2);
+      ctx3.lineTo(0.61 * width2, -0.58 * width2);
+      ctx3.lineTo(1.28 * width2, 0.28 * width2);
+      ctx3.lineTo(-0.37 * width2, 0.72 * width2);
+      ctx3.closePath();
+      ctx3.fillStyle = i % 3 ? "#9d9d87" : "#c8bca4";
+      ctx3.fill();
+      ctx3.strokeStyle = "#ece2c4";
+      ctx3.lineWidth = 0.68;
+      ctx3.beginPath();
+      ctx3.moveTo(-width2, -0.31 * width2);
+      ctx3.lineTo(0.61 * width2, -0.58 * width2);
+      ctx3.stroke();
+      ctx3.restore();
+    }
+  }
+  function dawn(draw, ctx3, hero2, size, age) {
+    const glow = Math.min(clamp2(age / 0.7, 0, 1), clamp2((3.5 - age) / 1.18, 0, 1));
+    for (let i = 0; i < 15; i++) {
+      const rise = age * (0.31 + i % 4 * 0.072) + i * 0.154;
+      const angle = i * 2.39996 + age * 0.16, radius = size * (0.52 + i % 6 * 0.13);
+      const x = hero2.x + radius * Math.cos(angle), z = hero2.z + radius * Math.sin(angle);
+      const p = draw(x, ground(x, z) + size * (0.12 + rise), z);
+      if (!p) continue;
+      const f = 0.42 + 0.23 * Math.cos(i * 2.1 + age * 2.6);
+      const r = clamp2(size * p.k * (9e-3 + 4e-3 * (i % 3)), 0.62, 2.3);
+      ctx3.fillStyle = "rgba(249,209,132," + glow * f + ")";
+      ctx3.beginPath();
+      ctx3.ellipse(p.x, p.y, r, r * 0.65, angle, 0, tau);
+      ctx3.fill();
+    }
+  }
+  function drawLineage(ctx3, project2, game2, time) {
+    const rite = game2.rite;
+    if (!rite) return;
+    const age = time - rite.t;
+    if (age < 0 || rite.kind === "seedfall" && age > 3.4 || rite.kind === "human" && age > 3.5) return;
+    const width2 = ctx3.canvas.clientWidth || ctx3.canvas.width, height2 = ctx3.canvas.clientHeight || ctx3.canvas.height;
+    const draw = (x, y, z) => {
+      const p = project2(x, y, z);
+      return p && p.depth > 0.18 && p.x >= -8 && p.x <= width2 + 8 && p.y >= -8 && p.y <= height2 + 8 ? p : null;
+    };
+    ctx3.save();
+    const hero2 = game2.hero, size = bodySize(hero2);
+    if (rite.kind === "seedfall") seedfall(draw, ctx3, hero2, size, age);
+    else if (rite.kind === "knap" && rite.lastHit != null) knapping(draw, ctx3, hero2, size, rite, time - rite.lastHit);
+    else if (rite.kind === "human") dawn(draw, ctx3, hero2, size, age);
+    ctx3.restore();
+  }
+
   // src/flight-art.js
-  var clamp2 = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  var clamp3 = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   function birdRibbon(ctx3, screen, history, size, side, opacity, time) {
     let prior;
     for (let i = 0; i < history.length; i++) {
-      const p = history[i], age = time - p.t, strength = 1 - clamp2(age / 0.31, 0, 1);
+      const p = history[i], age = time - p.t, strength = 1 - clamp3(age / 0.31, 0, 1);
       if (strength === 0) {
         prior = null;
         continue;
@@ -921,7 +1223,7 @@
         ctx3.beginPath();
         ctx3.moveTo(prior.x, prior.y);
         ctx3.lineTo(point.x, point.y);
-        ctx3.lineWidth = clamp2(point.k * size * 0.012, 0.7, 2.4) * (0.66 + 0.34 * strength);
+        ctx3.lineWidth = clamp3(point.k * size * 0.012, 0.7, 2.4) * (0.66 + 0.34 * strength);
         ctx3.strokeStyle = "rgba(195,229,231," + opacity * strength * 0.66 + ")";
         ctx3.stroke();
       }
@@ -948,7 +1250,7 @@
         ctx3.strokeStyle = "rgba(239,191,94," + strength * 0.48 + ")";
         ctx3.stroke();
       }
-      const radius = clamp2(mote.k * size * (0.018 + 7e-3 * Math.sin(phase)), 0.72, 2.3);
+      const radius = clamp3(mote.k * size * (0.018 + 7e-3 * Math.sin(phase)), 0.72, 2.3);
       ctx3.beginPath();
       ctx3.arc(mote.x, mote.y, radius, 0, Math.PI * 2);
       ctx3.fillStyle = "rgba(255,218,123," + strength * 0.78 + ")";
@@ -956,7 +1258,7 @@
     }
   }
   function targetMark(ctx3, point, target, selected, bee, alpha) {
-    const radius = clamp2(point.k * bodySize(target) * (bee ? 0.91 : 1.14), bee ? 5 : 7, bee ? 23 : 34);
+    const radius = clamp3(point.k * bodySize(target) * (bee ? 0.91 : 1.14), bee ? 5 : 7, bee ? 23 : 34);
     const corner = Math.min(6, radius * 0.42), yRadius = radius * 0.77;
     ctx3.beginPath();
     for (const side of [-1, 1]) {
@@ -1009,7 +1311,7 @@
     ctx3.lineJoin = "round";
     const flight = game2.flight;
     if (flight?.phase === "dive" && flight.history?.length > 1) {
-      const opacity = 0.42 + 0.58 * Math.sin(Math.PI * clamp2(flight.u, 0, 1));
+      const opacity = 0.42 + 0.58 * Math.sin(Math.PI * clamp3(flight.u, 0, 1));
       if (bee) pollen(ctx3, screen, flight.history, size, opacity, time);
       else for (const side of [-1, 1]) birdRibbon(ctx3, screen, flight.history, size, side, opacity, time);
     }
@@ -1017,7 +1319,7 @@
     const selected = flight?.target?.live ? flight.target : scan && sight.selected?.live ? sight.selected : game2.airTarget;
     let count = strokeTarget(selected, true, 0.92) ? 1 : 0;
     if (scan) {
-      const alpha = 0.76 * clamp2((sight.until - time) / 0.28, 0, 1);
+      const alpha = 0.76 * clamp3((sight.until - time) / 0.28, 0, 1);
       const seen = /* @__PURE__ */ new Set([selected]);
       for (const target of sight.targets) {
         if (count >= 5) break;
@@ -1030,7 +1332,7 @@
   }
 
   // src/silk-art.js
-  var tau = 2 * Math.PI;
+  var tau2 = 2 * Math.PI;
   var unit = (value) => Math.min(1, Math.max(0, value));
   function projected(ctx3, project2, point, firstPerson) {
     const p = project2(point.x, point.y, point.z);
@@ -1088,7 +1390,7 @@
         z: start.z + ez * u + rz * sway
       };
       primary.push(screen(p));
-      const gap = size * bow * (0.038 + 0.023 * Math.sin(tau * u - age * 5));
+      const gap = size * bow * (0.038 + 0.023 * Math.sin(tau2 * u - age * 5));
       second.push(screen({ x: p.x + rx * gap, y: p.y - gap * 0.38, z: p.z + rz * gap }));
     }
     ctx3.save();
@@ -1109,13 +1411,13 @@
         return screen({ x: end.x + across * rx + wrap * rz, y: end.y + vertical, z: end.z + across * rz - wrap * rx });
       };
       for (let n = 0; n < 7; n++) {
-        const a = n * tau / 7 + 0.19;
+        const a = n * tau2 / 7 + 0.19;
         stroke(ctx3, [shape(a, 0), shape(a + 0.06, 0.53), shape(a, 1)], "rgba(226,241,231,.75)", 0.72);
       }
       for (const f of [0.5, 0.91]) {
         const ring = [];
         for (let k = 0; k <= 28; k++) {
-          const a = k * tau / 28 + 0.19;
+          const a = k * tau2 / 28 + 0.19;
           ring.push(shape(a, f * (1 - 0.13 * Math.sin(k * Math.PI / 4) ** 2)));
         }
         stroke(ctx3, ring, "rgba(219,239,229,.8)", 0.83);
@@ -1124,7 +1426,7 @@
       const r = Math.min(3, Math.max(0.9, (tip.k || 1) * size * 0.021));
       ctx3.fillStyle = "rgba(248,255,232,.95)";
       ctx3.beginPath();
-      ctx3.arc(tip.x, tip.y, r, 0, tau);
+      ctx3.arc(tip.x, tip.y, r, 0, tau2);
       ctx3.fill();
     }
     ctx3.restore();
@@ -1514,7 +1816,7 @@
     props = game2.world.props;
     const yaw = game2.yaw || 0;
     const playerSize = bodySize(hero2);
-    const behind = game2.firstPerson ? 0 : 7.2 * Math.sqrt(playerSize) * (game2.zoom || 1);
+    const behind = game2.firstPerson ? 0 : (game2.rite?.kind === "human" || game2.rite?.kind === "knap" ? 4.6 : 7.2) * Math.sqrt(playerSize) * (game2.zoom || 1);
     const submerged = hero2.y + playerSize * 0.8 < 0 && ground(hero2.x, hero2.z) < 0;
     let cameraHeight = hero2.y + playerSize * (game2.firstPerson ? 1.05 : 4.05) + Math.sin(game2.pitch) * behind * 0.78;
     if (submerged) cameraHeight = Math.min(-0.13, cameraHeight);
@@ -1534,7 +1836,7 @@
       if (!game2.firstPerson) {
         const eyeToBody = Math.atan2(target.y - hero2.y - playerSize * 0.83, Math.max(0.12, Math.hypot(target.x - hero2.x, target.z - hero2.z)));
         const halfFOV = Math.atan(height / (2 * focal));
-        target.tilt = Math.max(eyeToBody - halfFOV * 0.8, Math.min(eyeToBody + halfFOV * 0.72, target.tilt));
+        target.tilt = game2.rite ? eyeToBody : Math.max(eyeToBody - halfFOV * 0.8, Math.min(eyeToBody + halfFOV * 0.72, target.tilt));
       }
     }
     camera.yaw = intro ? 0 : yaw;
@@ -1607,6 +1909,7 @@
       }
       drawCombat(ctx2, project, game2, time);
       drawFlight(ctx2, project, game2, time);
+      if (game2.rite) drawLineage(ctx2, project, game2, time);
       if (game2.web) drawSilk(ctx2, project, hero2, game2.web, time, game2.firstPerson);
       for (const a of [...game2.items, ...game2.enemies]) {
         if (!a.live || a.hp === a.maxHP) continue;
@@ -1620,48 +1923,6 @@
       }
     }
   }
-
-  // src/ecology.js
-  var habitats = [
-    { name: "Primordial lagoon", x: 0, z: 42, tint: "#348993", accent: "#77ede4" },
-    { name: "Glassfin reef", x: 82, z: 85, tint: "#477ea3", accent: "#f8a59f" },
-    { name: "Silkwood hollow", x: -77, z: 5, tint: "#716389", accent: "#b5a2ff" },
-    { name: "Amber meadow", x: 85, z: -40, tint: "#949755", accent: "#ffd07d" },
-    { name: "Seedfall grove", x: 0, z: -88, tint: "#58795a", accent: "#bdd87c" },
-    { name: "Spore marsh", x: -87, z: 102, tint: "#487a70", accent: "#a6f0ba" }
-  ];
-  var forms = {
-    amoeba: { name: "Amoeba", prey: "microbe", quota: 8, action: "Engulf", next: ["colony"] },
-    colony: { name: "Cell colony", prey: "microbe", quota: 12, action: "Engulf", next: ["fish"] },
-    fish: { name: "Glassfin", prey: "minnow", quota: 14, action: "Bite", next: ["lungfish"] },
-    lungfish: { name: "Lungfish", prey: "minnow", quota: 14, action: "Snap", next: ["spider", "bee"] },
-    spider: { name: "Silk hunter", prey: "moth", quota: 10, action: "Cast web", next: ["bird"] },
-    bird: { name: "Canopy bird", prey: "moth", quota: 12, action: "Talon dive", next: ["ape"] },
-    ape: { name: "Toolmaker", prey: "mite", quota: 12, action: "Strike", next: ["bee"] },
-    bee: { name: "Pollinator", prey: "mite", quota: 10, action: "Drop sting", next: ["cleaner", "sapling"] },
-    cleaner: { name: "Cleaner fish", prey: "leech", quota: 12, action: "Pluck", next: ["worm"] },
-    worm: { name: "Earthworm", prey: "leech", quota: 10, action: "Pinch", next: ["snail"] },
-    snail: { name: "Shell grazer", prey: "mite", quota: 12, action: "Crush", next: ["sapling"] },
-    sapling: { name: "Rooted shoot", prey: "blight", quota: 12, action: "Root lash", next: ["tree"] },
-    tree: { name: "Fruit tree", prey: "blight", quota: 16, action: "Vine lash", next: [] }
-  };
-  var species = {
-    microbe: { label: "Drifter", name: "drifter cells", color: "#c9f68a", hp: 1, speed: 1.8 },
-    shiner: { label: "Silver shiner", name: "silver shiners", color: "#c6dede", hp: 2, speed: 3.6 },
-    minnow: { label: "Glass minnow", name: "shoal fish", color: "#ffb585", hp: 3, speed: 3.1 },
-    moth: { label: "Lantern moth", name: "lantern moths", color: "#ffe098", hp: 2, speed: 2.7 },
-    mite: { label: "Red mite", name: "red mites", color: "#fa9279", hp: 2, speed: 3.4 },
-    leech: { label: "Marsh leech", name: "marsh leeches", color: "#c4a1e8", hp: 2, speed: 2.5 },
-    blight: { label: "Blight spore", name: "blight spores", color: "#f39aab", hp: 3, speed: 1.9 }
-  };
-  var traits = [
-    { id: "bite", branch: "Predation", name: "Serrated bite", desc: "+1 damage per strike" },
-    { id: "reach", branch: "Predation", name: "Lunging strike", desc: "Extend strike range by 40%", parent: "bite" },
-    { id: "swim", branch: "Motion", name: "Streamlined body", desc: "Move 25% faster" },
-    { id: "reflex", branch: "Motion", name: "Quick reflex", desc: "Strike again 35% sooner", parent: "swim" },
-    { id: "shell", branch: "Survival", name: "Tough membrane", desc: "Gain one heart immediately" },
-    { id: "heal", branch: "Survival", name: "Regeneration", desc: "Recover one heart after each kill", parent: "shell" }
-  ];
 
   // src/chunks.js
   var SIZE = 40;
@@ -1859,6 +2120,8 @@
   var visits = {
     bird: { form: "bird", x: 2.6, z: 1.3, depth: 7.6, yaw: 1.6, angle: 1.6, pitch: 0.43, zoom: 1.03 },
     pollinator: { form: "bee", x: 2.6, z: 1.3, depth: 3.8, yaw: 1.7, angle: 1.6, pitch: 0.4, zoom: 0.91 },
+    seedfall: { form: "tree", x: 3.4, z: 1.8, depth: 0.25, yaw: -0.31, angle: 0.66, pitch: 0.1, zoom: 0.88 },
+    firsttool: { form: "ape", x: 3.4, z: 1.8, depth: 0.25, yaw: -0.31, angle: 0.66, pitch: 0.12, zoom: 0.85 },
     forest: { form: "ape", x: 3.4, z: 1.8, depth: 0.25, yaw: -0.31, angle: 0.66, pitch: 0.15, zoom: 0.8 },
     spider: { form: "spider", x: 2.6, z: 1.3, depth: 1.2, yaw: -0.1, angle: 3.05, pitch: -0.08, zoom: 0.94 },
     reef: { form: "fish", x: 0.8, z: 34.4, depth: 4.3, yaw: -0.35, angle: -2.65, pitch: 0.02, zoom: 0.93 }
@@ -1866,6 +2129,7 @@
   var visitKey = (window.location?.hash || "").slice(1);
   var visit = Object.hasOwn(visits, visitKey) ? visits[visitKey] : null;
   var savedRun = visit ? null : readRun();
+  var book = loadLineage(savedRun);
   var saveRevision = savedRun?.revision || 0;
   var $ = (id) => document.getElementById(id);
   var keys = /* @__PURE__ */ new Set();
@@ -1899,7 +2163,7 @@
   var era = 0;
   var tips = {
     amoeba: "Engulf nearby drifting cells. Your short reach makes positioning matter.",
-    colony: "Your larger membrane reaches farther. Each meal expands your colony. Finish the hunt to grow fins.",
+    colony: "Your larger membrane reaches farther. Each meal expands your colony. Finish the hunt to choose a plant or animal life.",
     fish: "Follow a shoal or use Find prey. Match the fish\u2019s depth before biting.",
     lungfish: "Surface to refill your air. Your fins can carry you across wet sand.",
     spider: "G faces a moth. Space casts up to 11 m and reels it down. Press Space again to bite.",
@@ -1910,7 +2174,8 @@
     worm: "Follow the damp bank. Land leeches are within reach from the soil.",
     snail: "Your shell absorbs one predator hit each life as a grazer.",
     sapling: "Use your roots to lash blight spores near the ground.",
-    tree: "Lash the last blight spores to release the Canopy Heart\u2019s seeds."
+    tree: "Clear the blight so your fruit can ripen and release its seeds.",
+    human: "Walk with WASD. Hold B to run or use the Run button. Your handaxe can defend you."
   };
   var shellGuard = false;
   var formTipUntil = 0;
@@ -1919,7 +2184,9 @@
     try {
       const last2 = JSON.parse(localStorage.getItem(SAVE_KEY));
       if ((last2?.revision || 0) !== saveRevision) return;
-      const record = { revision: saveRevision + 1, form: hero.form, kills, total, era, life, checkpoint, learned: [...learned], consumed: world.consumed(), fallen: game.fallen, defeated: !!game.defeat || chapter === "REBIRTH" };
+      book.scores[hero.form] = kills;
+      book.homes[hero.form] = { ...checkpoint };
+      const record = { lineage: recordLineage(book), rite: game.rite ? { kind: game.rite.kind, hits: game.rite.hits } : null, deathReason: game.defeat?.reason || null, revision: saveRevision + 1, form: hero.form, kills, total, era, life, checkpoint, learned: [...learned], consumed: world.consumed(), fallen: game.fallen, defeated: !!game.defeat || chapter === "REBIRTH" };
       localStorage.setItem(SAVE_KEY, JSON.stringify(record));
       saveRevision = record.revision;
     } catch {
@@ -1931,7 +2198,7 @@
     kills = r.kills;
     total = r.total;
     xp = total * 10;
-    life = Math.max(1, r.life) + (r.defeated ? 1 : 0);
+    life = Math.max(1, r.life);
     for (const id of r.learned) if (traits.some((t) => t.id === id)) learned.add(id);
     points = Math.max(0, Math.floor(total / 3) - learned.size);
     game.fallen = !!r.fallen;
@@ -1948,6 +2215,13 @@
     placeForm(hero.form, true);
     sync();
     focusPrey();
+    if (r.defeated) {
+      game.defeat = { reason: r.deathReason || "Your last life has ended", t: clock - 0.9 };
+      health = 0;
+      finishDefeat();
+    } else if (r.rite?.kind === "knap" && hero.form === "ape" && !book.crafted) beginRite("knap", r.rite.hits);
+    else if (r.rite?.kind === "human" && ["ape", "human"].includes(hero.form) && availableForms(book).includes("human")) beginRite("human");
+    else if (r.rite?.kind === "seedfall" && hero.form === "tree") beginRite("seedfall");
   }
   function form() {
     return forms[hero.form];
@@ -1990,9 +2264,11 @@
     return visible || closest;
   }
   function quota() {
+    if (hero.form === "human") return 0;
     return form().quota + Math.min(3, era);
   }
   function maturity() {
+    if (hero.form === "human") return 1;
     return Math.min(1, kills / quota());
   }
   function growthSize() {
@@ -2016,6 +2292,7 @@
     game.pitch = Math.max(-0.98, Math.min(downwardLimit(), Math.atan2(eye - a.y - bodySize(a) * 0.85, Math.hypot(dx, dz) + behind) - base));
   }
   function findAction() {
+    if (game.rite) return;
     if (!isFlier(hero.form)) {
       focusPrey();
       return;
@@ -2055,7 +2332,8 @@
     radioUntil = clock + 6;
   }
   function updateHUD() {
-    const ready2 = kills >= quota(), f = form();
+    const f = form(), human = hero.form === "human", end = endOfLife(hero.form), ready2 = kills >= quota();
+    const resting = end && ready2 && !game.rite && !game.defeat && (hero.form !== "tree" || book.seedShed);
     game.huntComplete = ready2;
     $("place").textContent = biomeAt(hero.x, hero.z).name;
     $("form").textContent = f.name;
@@ -2063,19 +2341,21 @@
     $("hpbar").max = maxHealth();
     $("hpbar").value = health;
     $("hpbar").classList.toggle("low", health === 1);
-    $("growth").textContent = (kills >= quota() ? "Fully grown" : "Growing") + " \xB7 " + Math.round(100 * growthSize() / scaleOf(hero.form)) + "% adult size";
+    $("growth").textContent = human ? "Adult \xB7 Human" : (ready2 ? "Fully grown" : "Growing") + " \xB7 " + Math.round(100 * growthSize() / scaleOf(hero.form)) + "% adult size";
     $("findLabel").textContent = hero.form === "bird" ? "Eagle Eye" : hero.form === "bee" ? "Spot bugs" : "Find prey";
     $("findPrey").title = isFlier(hero.form) ? "Spot visible prey. Press again to switch target." : "Face nearest prey";
     $("findPrey").hidden = ready2;
     $("preyCue").hidden = ready2;
-    $("objectiveTitle").textContent = ready2 ? "EVOLUTION READY" : "HUNT";
-    $("task").textContent = ready2 ? hero.form === "tree" ? "Release the seeds" : "Choose your next form" : "Consume " + quota() + " " + species[f.prey].name;
-    $("counter").textContent = Math.min(kills, quota()) + " / " + quota() + " kills";
+    $("objectiveTitle").textContent = human ? "FREE ROAM" : ready2 && end ? "LIFE CYCLE" : ready2 ? "ADAPTATION READY" : "HUNT";
+    $("task").textContent = human ? "Explore the living world" : ready2 && end ? hero.form === "tree" ? "The last seed falls" : "The last flight" : ready2 ? hero.form === "ape" && !book.crafted && bothPaths(book) ? "Shape your first stone tool" : "Choose your next life" : "Consume " + quota() + " " + species[f.prey].name;
+    $("counter").textContent = human ? "Both paths complete" : ready2 && end ? hero.form === "tree" ? "Fruit scattered across the forest floor" : "The canopy grows quiet" : Math.min(kills, quota()) + " / " + quota() + " kills";
     $("xp").textContent = xp + " XP \xB7 Lv " + (1 + Math.floor(total / 3));
-    $("fill").style.width = Math.min(100, 100 * kills / quota()) + "%";
+    $("fill").style.width = (human ? 100 : Math.min(100, 100 * kills / quota())) + "%";
     $("points").textContent = points;
-    $("verb").textContent = hero.form === "spider" && game.web?.phase === "pinned" ? "Bite moth" : f.action;
-    $("evolve").hidden = !ready2;
+    $("verb").textContent = game.rite?.kind === "knap" ? "Strike flint" : hero.form === "spider" && game.web?.phase === "pinned" ? "Bite moth" : f.action;
+    $("evolve").hidden = !ready2 || end || human || !!game.rite || !!game.defeat;
+    $("restBtn").hidden = !resting;
+    $("runBtn").hidden = !human || !!game.rite;
     $("cameraBtn").textContent = game.firstPerson ? "1st person" : "3rd person";
   }
   function button(label, fn) {
@@ -2085,7 +2365,7 @@
     return b;
   }
   function panel(kind, title, body) {
-    if (game.defeat && kind !== "REBIRTH") return;
+    if (game.rite || game.defeat && kind !== "REBIRTH") return;
     playing = false;
     keys.clear();
     chapter = kind;
@@ -2103,26 +2383,109 @@
     playing = true;
     chapter = "";
   }
-  function evolve() {
-    if (!playing || game.defeat || kills < quota()) return;
-    if (hero.form === "tree") {
-      game.fallen = true;
-      saveRun();
-      panel("CANOPY HEART", "The first seedfall", "Your fruit splits open. A cloud of golden seeds lifts from the nursery arch. Start a new lineage with the skills your last one earned.");
-      $("actions").append(button("Begin another lineage", () => {
-        era++;
+  function lineagePanel(choose = false) {
+    if (game.rite) return;
+    const dead = !!game.defeat;
+    const body = dead ? availableForms(book).length === 1 ? "This is your first form. Choose it to begin another life at your checkpoint." : "Choose the form you want to wake up as. Each keeps its own hunt progress." : choose ? "Choose a form to inhabit. Your earlier lives and their progress are remembered." : "Follow both paths to unlock the Toolmaker. A form opens when its preceding life is complete.";
+    panel(dead ? "REBIRTH" : choose ? "EVOLUTION" : "LINEAGE", dead ? "Choose your next life" : choose ? "Choose your form" : "Your lineage", dead ? game.defeat.reason + ". " + body : body);
+    drawLineageMenu($("panel"), book, hero.form, choose ? selectForm : null);
+    if (!dead) $("actions").append(button("Return to habitat", resume));
+  }
+  function selectForm(id) {
+    if (!["REBIRTH", "EVOLUTION"].includes(chapter) || !availableForms(book).includes(id)) return;
+    const waking = !!game.defeat;
+    if (id === "human" && !Object.hasOwn(book.scores, "human")) {
+      if (waking) {
+        game.defeat = null;
         life++;
-        changeForm("amoeba");
-        resume();
-      }));
+      }
+      resume();
+      if (hero.form !== "ape" || waking) changeForm("ape");
+      beginRite("human");
       return;
     }
-    panel("EVOLUTION", "Choose your next form", "Your kills unlocked this adaptation. You can evolve here.");
-    for (const next of form().next) $("actions").append(button(forms[next].name, () => {
-      changeForm(next);
-      resume();
-      say("Evolved into " + forms[next].name);
-    }));
+    if (waking) {
+      newLife(id);
+      return;
+    }
+    resume();
+    changeForm(id);
+    say("Living as " + forms[id].name);
+  }
+  function evolve() {
+    if (!playing || game.rite || game.defeat || endOfLife(hero.form) || hero.form === "human" || kills < quota()) return;
+    if (hero.form === "ape" && bothPaths(book) && !book.crafted) {
+      panel("TOOLMAKING", "Shape a handaxe", "Strike the flint three times to shape an edge. The finished tool opens the human form.");
+      $("actions").append(button("Work the flint", () => {
+        resume();
+        beginRite("knap");
+      }), button("Return to habitat", resume));
+      return;
+    }
+    if (hero.form !== "ape" || book.crafted) book.done.add(hero.form);
+    book.scores[hero.form] = kills;
+    saveRun();
+    lineagePanel(true);
+  }
+  function beginRite(kind, hits = 0) {
+    game.rite = { kind, t: clock, hits: Math.max(0, Math.min(3, Number(hits) || 0)), lastHit: hits >= 3 ? clock : null, first: game.firstPerson, yaw: game.yaw, pitch: game.pitch };
+    game.firstPerson = false;
+    game.yaw = Math.atan2(Math.sin(hero.angle + 0.48), -Math.cos(hero.angle + 0.48)) + Math.PI;
+    game.pitch = 0.04;
+    game.snap = true;
+    keys.clear();
+    updateHUD();
+    saveRun();
+  }
+  function strikeFlint() {
+    const rite = game.rite;
+    if (rite?.kind !== "knap" || rite.hits >= 3 || clock - (rite.lastHit ?? -1) < 0.4) return;
+    rite.lastHit = clock;
+    rite.hits++;
+    saveRun();
+  }
+  function advanceRite(dt) {
+    const rite = game.rite, u = clock - rite.t;
+    if (rite.kind === "knap") {
+      $("signal").textContent = "Knapping \xB7 " + rite.hits + " / 3 \xB7 Space to strike";
+      if (rite.hits < 3 || clock - rite.lastHit < 0.55) return;
+      book.crafted = true;
+      book.done.add("ape");
+    } else if (rite.kind === "seedfall") {
+      $("signal").textContent = "Seedfall";
+      if (u < 3.4) return;
+      book.seedShed = true;
+      game.fallen = true;
+    } else {
+      $("signal").textContent = u < 1.35 ? "The first tool" : "The first human";
+      if (u >= 1.35 && hero.form !== "human") {
+        const yaw = game.yaw, pitch = game.pitch;
+        changeForm("human");
+        game.yaw = yaw;
+        game.pitch = pitch;
+      }
+      if (u >= 2.45 && u < 3.45) {
+        travel(hero, "human", Math.sin(hero.angle) * dt * 0.75, Math.cos(hero.angle) * dt * 0.75, world.solids, swimDepth);
+      }
+      if (u < 3.5) return;
+    }
+    game.firstPerson = rite.first;
+    game.yaw = rite.yaw;
+    game.pitch = rite.pitch;
+    game.rite = null;
+    game.snap = true;
+    keys.clear();
+    $("signal").textContent = "";
+    updateHUD();
+    saveRun();
+    if (rite.kind === "knap") {
+      lineagePanel(true);
+      return;
+    }
+    if (rite.kind === "human") {
+      panel("HUMAN", "Congratulations \u2014 you evolved into a human!", "Your stone handaxe is yours to carry. The world is still open to explore.");
+      $("actions").append(button("Explore as Human", resume));
+    }
   }
   function placeForm(next, safe = false) {
     const size = bodySize(hero);
@@ -2133,6 +2496,10 @@
     return shifted;
   }
   function changeForm(next) {
+    book.scores[hero.form] = kills;
+    book.homes[hero.form] = { ...checkpoint };
+    if (!book.first && pathOf(next)) book.first = pathOf(next);
+    const home = book.homes[next];
     game.swing = null;
     game.dodge = null;
     game.web = null;
@@ -2140,7 +2507,8 @@
     game.sight = null;
     game.airTarget = null;
     hero.form = next;
-    kills = 0;
+    kills = book.scores[next] ?? (book.done.has(next) ? quota() : 0);
+    book.scores[next] = kills;
     hero.size = growthSize();
     shellGuard = next === "snail";
     swimDepth = next === "lungfish" ? 0.25 : next === "bird" ? 5 : 2.4;
@@ -2155,8 +2523,18 @@
     health = maxHealth();
     cooldown = 0;
     immunity = 2;
+    if (home) {
+      hero.x = home.x;
+      hero.z = home.z;
+      swimDepth = home.depth;
+      game.yaw = home.yaw;
+    }
+    game.restTime = 0;
+    game.runToggle = false;
+    $("runBtn").textContent = "Run";
+    game.gait = 0;
     sync();
-    placeForm(next);
+    placeForm(next, true);
     sync();
     focusPrey();
     guideAt = clock + 0.18;
@@ -2166,7 +2544,7 @@
     saveRun();
   }
   function skills() {
-    if (game.defeat) return;
+    if (game.rite || game.defeat) return;
     panel("ADAPTATIONS", "Skill tree", points + " skill point" + (points === 1 ? "" : "s") + " available. Earn one point for every three kills. Each trait costs one point.");
     const grid = document.createElement("div");
     grid.className = "branches";
@@ -2289,7 +2667,7 @@
     c.restore();
   }
   function atlas() {
-    if (game.defeat) return;
+    if (game.rite || game.defeat) return;
     panel("EXPLORATION", "Habitat atlas", "The map follows you. Blue is water, sand marks the shore, and green is land. Gold dots mark prey, red dots mark predators, and cyan marks the lantern scout.");
     const canvas2 = document.createElement("canvas");
     canvas2.width = 520;
@@ -2303,12 +2681,13 @@
     $("actions").append(button("Return to world", resume));
   }
   function pause() {
-    if (game.defeat) return;
+    if (game.rite || game.defeat) return;
     panel("PAUSED", "Beneath the roots", "WASD moves. Drag the world or use Q/R to turn. F rises and C descends while swimming or flying. Space attacks, Shift dodges, E evolves, T opens skills, M opens the atlas, and V switches camera. Drag vertically or use I/K to look up and down. G faces prey. While flying, press G again to switch prey and Space to strike.");
     $("actions").append(button("Resume", resume));
     if (visit) $("actions").append(button("Return to title", () => openVisit("")));
   }
   function switchCamera() {
+    if (game.rite) return;
     game.firstPerson = !game.firstPerson;
     if (isFlier(hero.form) && game.airTarget?.live) focusPrey(game.airTarget);
     game.snap = true;
@@ -2316,6 +2695,10 @@
     say(game.firstPerson ? "First person \xB7 Drag or Q/R to look" : "Third person");
   }
   function attack() {
+    if (game.rite) {
+      if (playing) strikeFlint();
+      return;
+    }
     if (!playing || game.defeat || game.flight || cooldown > 0 || clock - (game.dodge?.t ?? -1) < 0.31) return;
     const duration = learned.has("reflex") ? 0.35 : 0.54;
     if (isFlier(hero.form)) {
@@ -2394,7 +2777,7 @@
     const hostile = Boolean(prey.predator);
     game.meal = { x: prey.x, y: prey.y, z: prey.z, angle: prey.angle, type: prey.type, t: clock, hostile, carrier: swing.airHit ? hero.form : null };
     world.kill(prey);
-    if (!hostile) kills++;
+    if (!hostile && hero.form !== "human") kills++;
     total++;
     xp += 10;
     guideAt = 0;
@@ -2405,7 +2788,7 @@
     saveRun();
   }
   function dodge() {
-    if (!playing || game.defeat || clock < (game.dodge?.ready ?? 0)) return;
+    if (!playing || game.rite || game.defeat || clock < (game.dodge?.ready ?? 0)) return;
     const side = Number(keys.has("d")) - Number(keys.has("a")), ahead = Number(keys.has("w")) - Number(keys.has("s"));
     const x = side || ahead ? side : 1, z = ahead, c = Math.cos(game.yaw), s = Math.sin(game.yaw), length = Math.hypot(x, z) || 1;
     game.dodge = { t: clock, ready: clock + 1.85, side: x < 0 ? -1 : 1, dx: (x * c + z * s) / length, dz: (x * s - z * c) / length };
@@ -2429,7 +2812,8 @@
     if (!health) die(profile.name + " landed " + profile.move);
   }
   function die(reason) {
-    if (game.defeat) return;
+    if (game.defeat || game.rite) return;
+    if (endOfLife(hero.form) && kills >= quota() && (hero.form === "bird" || book.seedShed)) book.done.add(hero.form);
     game.defeat = { reason, t: clock };
     game.swing = null;
     game.dodge = null;
@@ -2443,43 +2827,20 @@
     saveRun();
   }
   function finishDefeat() {
-    panel("REBIRTH", game.defeat.reason, "Your " + form().name + " returns to its evolution checkpoint with its size, hunt progress and skills.");
-    $("actions").append(button("Respawn as " + form().name, newLife));
+    lineagePanel(true);
     saveRun();
   }
-  function newLife() {
+  function newLife(id = hero.form) {
+    if (!game.defeat || !availableForms(book).includes(id)) return;
     game.defeat = null;
-    game.dodge = null;
-    game.swing = null;
-    game.web = null;
-    game.flight = null;
-    game.sight = null;
-    game.airTarget = null;
-    life++;
-    hero.x = checkpoint.x;
-    hero.z = checkpoint.z;
-    swimDepth = checkpoint.depth;
-    game.yaw = checkpoint.yaw;
-    game.pitch = 0;
-    hero.size = growthSize();
-    health = maxHealth();
-    immunity = 5;
-    reserve = 1;
-    exposure = 0;
-    shellGuard = hero.form === "snail";
-    cooldown = 0;
-    damageUntil = 0;
-    game.meal = null;
+    game.environment = null;
     game.impact = null;
-    game.guide = null;
-    game.pinnedPrey = null;
-    guideAt = 0;
-    sync();
-    placeForm(hero.form, true);
-    sync();
-    game.snap = true;
-    updateHUD();
+    damageUntil = 0;
+    life++;
     resume();
+    changeForm(id);
+    immunity = 5;
+    updateHUD();
     saveRun();
   }
   function breathe(dt, environment) {
@@ -2517,7 +2878,7 @@
       }
       const d = walkTo(r, r.form, hero.x + 2, hero.z - 2, 10, dt, 2.4);
       if (d < 2 || r.timer <= 0) {
-        radio(kills >= quota() ? "Your lineage is ready. Open evolution to choose a form." : "Get close before you strike. Your prey is marked gold on the radar.");
+        radio(hero.form === "human" ? "The trail carries on past the grove." : kills >= quota() && endOfLife(hero.form) ? "The seasonal colours are changing." : kills >= quota() ? "Your lineage is ready. Open evolution to choose a form." : "Get close before you strike. Your prey is marked gold on the radar.");
         r.mode = "scout";
         r.timer = 40;
         r.waypoint++;
@@ -2535,8 +2896,16 @@
     }
   }
   function simulation(dt) {
+    if (game.rite) {
+      advanceRite(dt);
+      return;
+    }
     if (game.defeat) {
       if (clock - game.defeat.t >= 0.8) finishDefeat();
+      return;
+    }
+    if (hero.form === "tree" && kills >= quota() && !book.seedShed) {
+      beginRite("seedfall");
       return;
     }
     if (game.swing && !game.swing.resolved && clock - game.swing.t >= game.swing.duration * 0.39) landAttack();
@@ -2547,7 +2916,10 @@
     game.pitch = Math.max(-0.98, Math.min(downwardLimit(), game.pitch + dt * (Number(keys.has("k")) - Number(keys.has("i"))) * 1.25));
     const side = Number(keys.has("d")) - Number(keys.has("a")), forward = Number(keys.has("w") || keys.has("arrowup")) - Number(keys.has("s") || keys.has("arrowdown"));
     const len = Math.hypot(side, forward) || 1, c = Math.cos(game.yaw), s = Math.sin(game.yaw), dx = (side * c + forward * s) / len, dz = (side * s - forward * c) / len;
-    const speed = 9 * (learned.has("swim") ? 1.25 : 1) * (hero.form === "bird" ? 1.35 : 1);
+    const human = hero.form === "human", moving = !!(side || forward);
+    game.running = human && (keys.has("b") || game.runToggle) && moving;
+    const lastX = hero.x, lastZ = hero.z;
+    const speed = (human ? game.running ? 8 : 4.2 : 9) * (learned.has("swim") ? 1.25 : 1) * (hero.form === "bird" ? 1.35 : 1);
     const nextSize = hero.size + (growthSize() - hero.size) * (1 - Math.exp(-dt * 4.5));
     if (!blocked(hero.x, hero.z, playerLevel(hero.form, hero.x, hero.z, swimDepth, nextSize), nextSize * 0.6, nextSize * 1.65, world.solids)) hero.size = nextSize;
     const size = bodySize(hero), mode = modeOf(hero.form), bottom = ground(hero.x, hero.z);
@@ -2568,6 +2940,23 @@
       travel(hero, hero.form, (dx * pace + (evading ? evade.dx * burst : 0)) * dt, (dz * pace + (evading ? evade.dz * burst : 0)) * dt, world.solids, swimDepth);
       if (isFlier(hero.form)) swimDepth = hero.y - Math.max(0, ground(hero.x, hero.z));
       if ((side || forward) && (!game.swing || clock - game.swing.t > game.swing.duration)) hero.angle = Math.atan2(dx, dz);
+    }
+    if (human) {
+      const dist = Math.hypot(hero.x - lastX, hero.z - lastZ);
+      game.gait = (game.gait || 0) + dist * (game.running ? 4.1 : 5.3);
+      game.moving = dist > 1e-3;
+    }
+    if (endOfLife(hero.form) && kills >= quota() && (hero.form === "bird" || book.seedShed)) {
+      const resting = keys.has("x") && !moving && (hero.form !== "bird" || swimDepth < 0.8);
+      game.restTime = resting ? (game.restTime || 0) + dt : 0;
+      if (keys.has("x") && hero.form === "bird" && swimDepth >= 0.8) say("Descend to a quiet perch");
+      if (resting) {
+        say("Resting\u2026");
+        if (game.restTime >= 4) {
+          die("A life fully lived");
+          return;
+        }
+      }
     }
     const environment = respiration(hero.form, hero.x, hero.y, hero.z, size);
     if (environment.wet && Math.abs(playerLevel(hero.form, hero.x, hero.z, swimDepth, size) - hero.y) > 0.1) swimDepth = Math.max(0.2, environment.depth);
@@ -2644,11 +3033,13 @@
     else focusPrey();
     updateHUD();
     if (savedRun) {
-      say("Evolution checkpoint restored");
+      if (!game.defeat && !game.rite) say("Evolution checkpoint restored");
       guideReadout();
       saveRun();
     } else radio("Green drifters ahead. Swim close and press Space to engulf one.");
   };
+  $("seedVisit").onclick = () => openVisit("seedfall");
+  $("toolVisit").onclick = () => openVisit("firsttool");
   $("forestVisit").onclick = () => openVisit("forest");
   $("reefVisit").onclick = () => openVisit("reef");
   $("birdVisit").onclick = () => openVisit("bird");
@@ -2660,6 +3051,17 @@
     hero.x = visit.x;
     hero.z = visit.z;
     kills = Math.floor(forms[visit.form].quota * 0.62);
+    if (["seedfall", "firsttool"].includes(visitKey)) {
+      const complete = visitKey === "firsttool" ? [...beginning, ...plantPath, ...animalPath] : [...beginning, "sapling"];
+      for (const id of complete) {
+        book.done.add(id);
+        book.scores[id] = forms[id].quota;
+      }
+      kills = forms[hero.form].quota;
+      book.first = "plant";
+      book.seedShed = visitKey === "firsttool";
+    }
+    book.scores[hero.form] = kills;
     total = kills;
     xp = 10 * kills;
     points = Math.floor(kills / 3);
@@ -2684,6 +3086,13 @@
     guideReadout();
     $("visitReturn").hidden = false;
   }
+  $("lineageBtn").onclick = () => {
+    if (playing && !game.rite) lineagePanel();
+  };
+  $("runBtn").onclick = () => {
+    game.runToggle = !game.runToggle;
+    $("runBtn").textContent = game.runToggle ? "Walk" : "Run";
+  };
   $("visitReturn").onclick = () => openVisit("");
   $("attack").onpointerdown = (e) => {
     e.preventDefault();
@@ -2713,6 +3122,11 @@
     if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) e.preventDefault();
     keys.add(k);
     if (e.repeat) return;
+    if (game.rite) {
+      if (k === " ") strikeFlint();
+      return;
+    }
+    if (k === "l") lineagePanel();
     if (k === "shift") dodge();
     if (k === " ") attack();
     if (k === "g") findAction();
@@ -2761,7 +3175,7 @@
     if (playing) simulation(dt);
     if (playing || game.snap) render(game, clock, dt);
     document.body.classList.toggle("hit", clock < damageUntil);
-    if (playing && clock > uiAt) {
+    if (playing && !game.rite && clock > uiAt) {
       $("dodge").disabled = clock < (game.dodge?.ready ?? 0) || !!game.defeat;
       const bottom = ground(hero.x, hero.z), env = game.environment || respiration(hero.form, hero.x, hero.y, hero.z, bodySize(hero)), wet = env.wet;
       $("depthControls").hidden = env.mode !== "air" && bottom >= 0;

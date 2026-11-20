@@ -3,6 +3,7 @@ import {lagoonLight} from './atmosphere.js'
 import {animalPlate,habitatPlate} from './plates.js'
 import {propFor,propHeight,propYaw,viewDistance,nurseryBeds,feedingPose} from './scenery.js'
 import {predatorPose,playerPose} from './combat.js'
+import {drawLineage} from './lineage-art.js'
 import {drawFlight} from './flight-art.js'
 import {drawSilk} from './silk-art.js'
 import {drawCombat} from './combat-art.js'
@@ -141,7 +142,7 @@ export function render(game,time,dt){
   props=game.world.props
   const yaw=game.yaw||0
   const playerSize=bodySize(hero)
-  const behind=game.firstPerson?0:7.2*Math.sqrt(playerSize)*(game.zoom||1)
+  const behind=game.firstPerson?0:(game.rite?.kind==='human'||game.rite?.kind==='knap'?4.6:7.2)*Math.sqrt(playerSize)*(game.zoom||1)
   const submerged=hero.y+playerSize*.8<0&&ground(hero.x,hero.z)<0
   let cameraHeight=hero.y+playerSize*(game.firstPerson?1.05:4.05)+Math.sin(game.pitch)*behind*.78
   if(submerged)cameraHeight=Math.min(-.13,cameraHeight)
@@ -156,7 +157,7 @@ export function render(game,time,dt){
     if(!game.firstPerson){
      const eyeToBody=Math.atan2(target.y-hero.y-playerSize*.83,Math.max(.12,Math.hypot(target.x-hero.x,target.z-hero.z)))
      const halfFOV=Math.atan(height/(2*focal))
-     target.tilt=Math.max(eyeToBody-halfFOV*.8,Math.min(eyeToBody+halfFOV*.72,target.tilt))
+     target.tilt=game.rite?eyeToBody:Math.max(eyeToBody-halfFOV*.8,Math.min(eyeToBody+halfFOV*.72,target.tilt))
     }
   }
   camera.yaw=intro?0:yaw
@@ -195,6 +196,7 @@ export function render(game,time,dt){
     if(game.firstPerson){ctx.beginPath();ctx.arc(width/2,height*.5,3,0,Math.PI*2);ctx.fillStyle='#f2f3c6';ctx.fill()}
     drawCombat(ctx,project,game,time)
     drawFlight(ctx,project,game,time)
+    if(game.rite)drawLineage(ctx,project,game,time)
     if(game.web)drawSilk(ctx,project,hero,game.web,time,game.firstPerson)
     for(const a of [...game.items,...game.enemies]){if(!a.live||a.hp===a.maxHP)continue;const pt=project(a.x,a.y+scaleOf(a.type)*2.1,a.z);if(pt){ctx.fillStyle='#253d43';ctx.fillRect(pt.x-13,pt.y,26,4);ctx.fillStyle='#ffc690';ctx.fillRect(pt.x-13,pt.y,26*a.hp/a.maxHP,4)}}
   }
