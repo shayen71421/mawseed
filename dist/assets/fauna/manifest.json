@@ -1,0 +1,390 @@
+{
+  "amoeba": {
+    "asset": "amoeba",
+    "span": 3.4550907611846924,
+    "centerY": 0.6186918616294861,
+    "tile": 288,
+    "views": 8,
+    "nodes": [
+      "membrane",
+      "cilia",
+      "body",
+      "tail"
+    ],
+    "vertices": 10648,
+    "triangles": 18632
+  },
+  "microbe": {
+    "asset": "microbe",
+    "span": 3.4550907611846924,
+    "centerY": 0.6186918616294861,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "membrane",
+      "cilia",
+      "body",
+      "tail"
+    ],
+    "vertices": 8580,
+    "triangles": 15060
+  },
+  "fish": {
+    "asset": "fish",
+    "span": 4.451878070831299,
+    "centerY": 1.0627777576446533,
+    "tile": 288,
+    "views": 8,
+    "nodes": [
+      "body",
+      "tail",
+      "dorsal",
+      "fins",
+      "fin_-1",
+      "fin_1"
+    ],
+    "vertices": 9051,
+    "triangles": 15636
+  },
+  "hunter": {
+    "asset": "hunter",
+    "span": 6.14359188079834,
+    "centerY": 1.037244439125061,
+    "tile": 288,
+    "views": 8,
+    "nodes": [
+      "body",
+      "tail",
+      "dorsal",
+      "fins",
+      "fin_-1",
+      "fin_1",
+      "jaw"
+    ],
+    "vertices": 11426,
+    "triangles": 19782
+  },
+  "colony": {
+    "asset": "colony",
+    "span": 3.4550907611846924,
+    "centerY": 0.6186918616294861,
+    "tile": 288,
+    "views": 8,
+    "nodes": [
+      "membrane",
+      "cilia",
+      "body",
+      "tail"
+    ],
+    "vertices": 11704,
+    "triangles": 20552
+  },
+  "minnow": {
+    "asset": "minnow",
+    "span": 3.205352306365967,
+    "centerY": 1.1423277854919434,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "tail",
+      "dorsal",
+      "fins",
+      "fin_-1",
+      "fin_1"
+    ],
+    "vertices": 9754,
+    "triangles": 16864
+  },
+  "cleaner": {
+    "asset": "cleaner",
+    "span": 4.718991279602051,
+    "centerY": 1.0031999349594116,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "tail",
+      "dorsal",
+      "fins",
+      "fin_-1",
+      "fin_1"
+    ],
+    "vertices": 9051,
+    "triangles": 15636
+  },
+  "lungfish": {
+    "asset": "lungfish",
+    "span": 5.0306220054626465,
+    "centerY": 1.0101044178009033,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "tail",
+      "dorsal",
+      "fins",
+      "fin_-1",
+      "fin_1"
+    ],
+    "vertices": 9477,
+    "triangles": 16420
+  },
+  "spider": {
+    "asset": "spider",
+    "span": 3.548494815826416,
+    "centerY": 0.5406086444854736,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body"
+    ],
+    "vertices": 4548,
+    "triangles": 8120
+  },
+  "bird": {
+    "asset": "bird",
+    "span": 3.7400174140930176,
+    "centerY": 0.9066872596740723,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "wing_-1",
+      "tail",
+      "wing_1"
+    ],
+    "vertices": 9932,
+    "triangles": 17004
+  },
+  "bee": {
+    "asset": "bee",
+    "span": 2.3413643836975098,
+    "centerY": 0.901764988899231,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "wing_-1",
+      "wing_1"
+    ],
+    "vertices": 4198,
+    "triangles": 7366
+  },
+  "moth": {
+    "asset": "moth",
+    "span": 2.7835211753845215,
+    "centerY": 0.9187557697296143,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "wing_-1",
+      "wing_1"
+    ],
+    "vertices": 6286,
+    "triangles": 11006
+  },
+  "ape": {
+    "asset": "ape",
+    "span": 3.144984483718872,
+    "centerY": 1.2369999885559082,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "arm_-1",
+      "leg_-1",
+      "arm_1",
+      "leg_1"
+    ],
+    "vertices": 6922,
+    "triangles": 12328
+  },
+  "worm": {
+    "asset": "worm",
+    "span": 2.599029064178467,
+    "centerY": 0.27217063307762146,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "tail",
+      "body"
+    ],
+    "vertices": 4464,
+    "triangles": 7936
+  },
+  "snail": {
+    "asset": "snail",
+    "span": 2.47566819190979,
+    "centerY": 0.6893259882926941,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body"
+    ],
+    "vertices": 5040,
+    "triangles": 9392
+  },
+  "sapling": {
+    "asset": "sapling",
+    "span": 2.4045207500457764,
+    "centerY": 0.918694794178009,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "leaves"
+    ],
+    "vertices": 6084,
+    "triangles": 10212
+  },
+  "tree": {
+    "asset": "tree",
+    "span": 3.6678450107574463,
+    "centerY": 1.3534009456634521,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "leaves"
+    ],
+    "vertices": 13512,
+    "triangles": 22708
+  },
+  "mite": {
+    "asset": "mite",
+    "span": 3.548494815826416,
+    "centerY": 0.5518484115600586,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "leg_-1_0",
+      "leg_-1_1",
+      "leg_-1_2",
+      "leg_-1_3",
+      "palp_-1",
+      "leg_1_0",
+      "leg_1_1",
+      "leg_1_2",
+      "leg_1_3",
+      "palp_1"
+    ],
+    "vertices": 6540,
+    "triangles": 11640
+  },
+  "leech": {
+    "asset": "leech",
+    "span": 2.599029064178467,
+    "centerY": 0.2740064859390259,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "tail",
+      "body"
+    ],
+    "vertices": 4464,
+    "triangles": 7936
+  },
+  "blight": {
+    "asset": "blight",
+    "span": 1.6143343448638916,
+    "centerY": 0.4699999690055847,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body"
+    ],
+    "vertices": 3445,
+    "triangles": 5912
+  },
+  "pike": {
+    "asset": "pike",
+    "span": 4.364825248718262,
+    "centerY": 0.8677938580513,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "jaw",
+      "tail",
+      "dorsal",
+      "fins",
+      "fin_-1",
+      "fin_1"
+    ],
+    "vertices": 8585,
+    "triangles": 15140
+  },
+  "mantis": {
+    "asset": "mantis",
+    "span": 3.392667531967163,
+    "centerY": 1.047832727432251,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "wing_-1",
+      "leg_-1_0",
+      "leg_-1_1",
+      "arm_-1",
+      "wing_1",
+      "leg_1_0",
+      "leg_1_1",
+      "arm_1"
+    ],
+    "vertices": 5946,
+    "triangles": 10640
+  },
+  "shiner": {
+    "asset": "shiner",
+    "span": 2.8016395568847656,
+    "centerY": 0.8349892497062683,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "body",
+      "tail",
+      "dorsal",
+      "fins",
+      "fin_-1",
+      "fin_1"
+    ],
+    "vertices": 6643,
+    "triangles": 11594
+  },
+  "canopy-heart": {
+    "asset": "canopy-heart",
+    "span": 32.95448684692383,
+    "centerY": 9.570274353027344,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "living xylem",
+      "sap channels",
+      "canopy blades",
+      "seed light",
+      "seed sepals"
+    ],
+    "vertices": 13319,
+    "triangles": 21618
+  },
+  "lantern": {
+    "asset": "lantern",
+    "span": 2.3584394454956055,
+    "centerY": 1.02330482006073,
+    "tile": 192,
+    "views": 8,
+    "nodes": [
+      "bell",
+      "body",
+      "photophore",
+      "fin_-1",
+      "tail",
+      "fin_1"
+    ],
+    "vertices": 6216,
+    "triangles": 11136
+  }
+}
