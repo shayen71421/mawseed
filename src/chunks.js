@@ -54,6 +54,9 @@ export function makeWorld(consumed=[]){
    if(type==='moth'&&x===0&&z===0){
     prey('glade/moth/0',4,.8,.49,2.4);prey('glade/moth/1',6.8,.3,1.35,2.4)
    }
+   if(type==='mite'&&x===0&&z===0){
+    prey('glade/mite/0',4,.8,.67,0);prey('glade/mite/1',6.8,.3,1.8,0);prey('glade/mite/2',2.1,1.9,2.4,0)
+   }
    if(type==='minnow'){
      // Reproducible small schools forage at different levels of the water column.
      if(x===0&&z===0){

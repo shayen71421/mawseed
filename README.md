@@ -15,9 +15,11 @@ The playable build ships in `dist/`. From the repository root, run `python3 -m h
 | Rise or descend | F / C |
 | Attack | Space or the attack button |
 | Evade | Shift or Dodge |
-| Face nearest prey | G |
+| Face prey, or scan and cycle visible quarry while flying | G |
 | Evolve or buy skills | E / T |
 | Atlas or camera | M / V |
 | Pause | Escape |
 
 Consume the prey named in your hunt to unlock evolution. Larger predators telegraph their attacks and expose themselves while recovering. Death returns you to the last evolution checkpoint with your current growth, hunt progress and purchased skills. Progress saves in the browser.
+
+The canopy bird uses Eagle Eye to spot up to five moths and a talon dive to catch one. The pollinator can hover above ground mites and drop into a sting. In both forms, press G to select prey, then Space to strike. Tree cover can interrupt the approach. The title screen offers practice visits for both forms, independent of your saved lineage.

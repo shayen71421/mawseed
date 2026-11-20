@@ -1,5 +1,6 @@
 from build import *
 from macaque import macaque
+from fliers import falcon, pollinator
 def feather(m,A,B,width,color,group):
  A=np.array(A);B=np.array(B);d=B-A;side=unit(np.array([d[2],0,-d[0]]));u=np.linspace(0,1,16)
  half=width*np.sin(PI*u)**.73*(1-u*.35);center=A+u[:,None]*d;center[:,1]+=.075*np.sin(PI*u)
@@ -7,23 +8,6 @@ def feather(m,A,B,width,color,group):
  V[...,1]+=.024*(1-abs(cross))[None,:]*np.sin(PI*u)[:,None];bands=.95+.065*np.cos(47*u[:,None]-6*abs(cross)[None,:])
  C=rgb(color)*bands[...,None];m.grid(V,C,.53,group,closed=False)
  m.strand([A,(A+B)*.5+[0,.09,0],B],[.014,.012,.002],mix(color,'ffefbf',.32),8,5,group=group)
-def bird(m):
- m.loft([(-1.0,.86,.018,.045),(-.7,.86,.20,.19),(-.3,.84,.33,.30),(.03,.88,.39,.38),(.34,.93,.33,.34),(.50,1.02,.19,.20)],lambda z,y,x:rgb('dca461')*(1-np.clip(y+.35,0,1)[...,None])+rgb('36746d')*np.clip(y+.35,0,1)[...,None],rough=.66)
- m.orb((0,1.20,.47),(.30,.29,.32),'357a76',rough=.48,seg=23,ring=14)
- m.orb((0,1.13,.68),(.22,.14,.18),'e8c793')
- m.strand([(0,1.20,.71),(0,1.20,.94),(0,1.17,1.11)],[.108,.077,.003],'3c4644',9,9)
- for s in [-1,1]:
-  eyes(m,s*.244,1.24,.59,.075,s)
-  m.strand([(s*.24,1.31,.69),(s*.27,1.32,.56),(s*.25,1.32,.41)],[.012,.021,.005],'dfd9a3',8,6)
-  W='wing_'+str(s);m.fin([(s*.17,1.00,-.64),(s*.3,1.11,-.17),(s*.31,1.07,.20)],[(s*.53,.95,-.8),(s*1.06,1.07,-.36),(s*.7,1.16,.21)],'2d6d6b',W,6)
-  for j in range(10):
-   t=j/9;feather(m,(s*(.37+.37*t),1.078,-.52+.60*t),(s*(.79+.87*t),1-.10*t,-1.07+.61*t),.13,'368e89' if j%3 else '27636b',W)
-  for j in range(7):
-   t=j/6;feather(m,(s*.34,1.12,-.55+.59*t),(s*(.69+.31*t),1.12,-.85+.66*t),.092,'65a398',W)
-  for j in range(3):
-   feather(m,(s*(.055+j*.042),.90,-.60),(s*(.10+j*.093),.86,-1.55+j*.10),.081,'297071','tail')
-  m.strand([(s*.17,.67,.0),(s*.20,.39,.06),(s*.23,.36,.21)],[.035,.026,.016],'b39e73',7,6)
-  for k in [-1,1]:m.strand([(s*.23,.36,.16),(s*.23+k*.06,.34,.27)],[.017,.002],'bf9f6d',4,5)
 def arthropod(m,k):
  mite=k=='mite';shell='bc6549' if mite else '746979'; dark='743c3e' if mite else '453c48';cream='f5be8e' if mite else 'd9ba9f'
  m.orb((0,.57,-.42),(.48,.42,.65),shell,rough=.42,seg=26,ring=15);m.orb((0,.58,.37),(.36,.32,.40),dark,rough=.41,seg=24,ring=14)
@@ -113,9 +97,10 @@ def blight(m):
   m.strand([P+.36*u,P+.45*u,P+.56*u],[.046,.036,.014],'ad788e',6,7)
   m.orb(P+.56*u,(.042,.043,.046),'dfa7ab',rough=.35,seg=9,ring=6)
 def land(m,k):
- if k=='bird':bird(m)
+ if k=='bird':falcon(m)
  elif k in ('spider','mite'):arthropod(m,k)
- elif k in ('bee','moth'):insect(m,k)
+ elif k=='bee':pollinator(m)
+ elif k=='moth':insect(m,k)
  elif k=='snail':gastropod(m)
  elif k in ('worm','leech'):annelid(m,k)
  elif k=='ape':macaque(m)

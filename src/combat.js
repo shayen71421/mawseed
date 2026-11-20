@@ -65,6 +65,20 @@ export const moves={
 export function playerPose(game,t){
  if(game.defeat){const u=ease(clamp01((t-game.defeat.t)/.78)),aquatic=['amoeba','colony','fish','cleaner','lungfish'].includes(game.hero.form);return {roll:u*(aquatic?1.67:1.25),pitch:u*(aquatic?.18:.55),stretch:1-.28*u,lift:-.24*u}}
  if(game.dodge&&t-game.dodge.t<.31){const u=clamp01((t-game.dodge.t)/.31);return {roll:Math.sin(Math.PI*u)*game.dodge.side*.83,pitch:-Math.sin(Math.PI*u)*.22,stretch:1+.14*Math.sin(Math.PI*u)}}
+ const flight=game.flight
+ if(flight){
+  const u=flight.u,wind=flight.phase==='windup',dive=flight.phase==='dive'
+  const brake=wind?u:dive?0:1-u
+  if(flight.kind==='bird'){
+   const extend=dive?Math.max(.1,u):wind?u*.3:1-u
+   return {wing:wind?.66*u:dive?-.47:.75*brake,tip:dive?.98:.25*brake,
+    pitch:wind?-.19*u:dive?flight.slope:-.52*brake,foot:extend,grip:flight.hit?brake:0,
+    bend:.08*brake,stretch:dive?1.07:1,plate:dive?'hunt':brake>.2?'upstroke':null}
+  }
+  const sting=dive?.72+.28*u:wind?.32*u:brake
+  return {abdomen:-1.12*sting,legs:.30*sting,pitch:wind?-.21*u:dive?-.32*sting:.18*brake,
+   wing:.23*brake,roll:.08*Math.sin(Math.PI*u),plate:sting>.45?'sting':'upstroke'}
+ }
  const a=game.swing;if(!a)return {}
  const u=clamp01((t-a.t)/a.duration);if(u>=1)return {}
  const draw=Math.sin(Math.min(1,u/.38)*Math.PI*.5)*(1-ease(clamp01((u-.38)/.24)))

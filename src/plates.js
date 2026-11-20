@@ -31,5 +31,10 @@ export function terrainSamples(name){
  }
  samples.set(name,levels);return levels
 }
-export function animalPlate(name){const model=fauna.get(name);return model&&ready(model.img)?model:null}
+export function animalPlate(name,pose){
+ const model=fauna.get(name);if(!model||!ready(model.img))return null
+ if(!model.poses?.[pose])return model
+ const img=asset('fauna/'+model.poses[pose]+'.webp')
+ return ready(img)?{...model,img}:model
+}
 export function habitatPlate(name){const model=habitat.get(name);return model&&ready(model.img)?model:null}

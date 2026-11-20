@@ -19,9 +19,10 @@ export const scaleOf=id=>({amoeba:.22,colony:.38,microbe:.15,fish:.8,shiner:.39,
 export const bodySize=actor=>actor.size??scaleOf(actor.form||actor.type)
 export function modeOf(id){if(['amoeba','microbe','colony','fish','cleaner','minnow','shiner','pike','hunter'].includes(id))return 'water';if(id==='lungfish'||id==='leech')return 'both';if(['bee','moth','bird'].includes(id))return 'air';return 'land'}
 export function fits(id,x,z,size=scaleOf(id)){const mode=modeOf(id),h=ground(x,z);if(mode==='water')return h<-(size*2.05+.25);if(mode==='land')return h>-.12;return true}
+export const flightCeiling=id=>id==='bird'?12:id==='bee'?6:5.2
 export function levelFor(id,x,z,depth=2.4,s=scaleOf(id)){
  const bottom=ground(x,z),mode=modeOf(id)
- if(mode==='air')return Math.max(0,bottom)+(id==='bird'?Math.max(.5,Math.min(8,depth)):id==='moth'?Math.max(.8,Math.min(5.2,depth)):1.2)
+ if(mode==='air')return Math.max(0,bottom)+Math.max(id==='moth'?.8:.075,Math.min(flightCeiling(id),depth))
  if(mode==='water'||(mode==='both'&&bottom<-.5))return Math.max(bottom+.08,Math.min(-s*2-.09,-depth-s*.7))
  return bottom+.018
 }

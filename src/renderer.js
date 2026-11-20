@@ -3,6 +3,7 @@ import {lagoonLight} from './atmosphere.js'
 import {animalPlate,habitatPlate} from './plates.js'
 import {propFor,propHeight,propYaw,viewDistance,nurseryBeds,feedingPose} from './scenery.js'
 import {predatorPose,playerPose} from './combat.js'
+import {drawFlight} from './flight-art.js'
 import {drawSilk} from './silk-art.js'
 import {drawCombat} from './combat-art.js'
 import {ground,scaleOf,bodySize} from './physics.js'
@@ -106,7 +107,8 @@ function plant(name,x,y,z,h,phase,t){
  ctx.drawImage(submergedView&&m.submerged?m.submerged:m.img,left,top,size,size);ctx.restore()}})
 }
 function animal(name,x,y,z,scale,angle,t,hit=0,hero=false,pose={}){
- const m=animalPlate(name);if(!m)return
+ const flier=name==='bird'||name==='bee',flap=Math.sin(t*(name==='bee'?30:6))>.35
+ const m=animalPlate(name,pose.plate||(flier&&flap?'upstroke':undefined));if(!m)return
  const pos=project(x,y+(m.centerY+(pose.lift||0))*scale+Math.sin(t*(hero?3:2.3))*.028*scale,z)
  if(!pos||pos.depth<.17)return
  const size=pos.k*m.span*scale
@@ -184,7 +186,7 @@ export function render(game,time,dt){
   }
   if(!intro){
     const guide=game.guide
-    if(guide?.live&&!game.huntComplete){
+    if(guide?.live&&!game.huntComplete&&hero.form!=='bird'&&hero.form!=='bee'){
      const p=project(guide.x,guide.y+bodySize(guide)*1.65,guide.z)
      if(p&&p.depth<38&&p.x>24&&p.x<width-24&&p.y>32&&p.y<height-32){
       const y=p.y-5;ctx.save();ctx.translate(p.x,y);ctx.beginPath();ctx.moveTo(-4,-5);ctx.lineTo(0,0);ctx.lineTo(4,-5);ctx.lineJoin='round';ctx.lineCap='round';ctx.lineWidth=4;ctx.strokeStyle='#19312d';ctx.stroke();ctx.lineWidth=2;ctx.strokeStyle='#ffe2a1';ctx.stroke();ctx.restore()
@@ -192,6 +194,7 @@ export function render(game,time,dt){
     }
     if(game.firstPerson){ctx.beginPath();ctx.arc(width/2,height*.5,3,0,Math.PI*2);ctx.fillStyle='#f2f3c6';ctx.fill()}
     drawCombat(ctx,project,game,time)
+    drawFlight(ctx,project,game,time)
     if(game.web)drawSilk(ctx,project,hero,game.web,time,game.firstPerson)
     for(const a of [...game.items,...game.enemies]){if(!a.live||a.hp===a.maxHP)continue;const pt=project(a.x,a.y+scaleOf(a.type)*2.1,a.z);if(pt){ctx.fillStyle='#253d43';ctx.fillRect(pt.x-13,pt.y,26,4);ctx.fillStyle='#ffc690';ctx.fillRect(pt.x-13,pt.y,26*a.hp/a.maxHP,4)}}
   }

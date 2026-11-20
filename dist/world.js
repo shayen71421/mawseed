@@ -59,9 +59,10 @@
     if (mode === "land") return h > -0.12;
     return true;
   }
+  var flightCeiling = (id) => id === "bird" ? 12 : id === "bee" ? 6 : 5.2;
   function levelFor(id, x, z, depth = 2.4, s = scaleOf(id)) {
     const bottom = ground(x, z), mode = modeOf(id);
-    if (mode === "air") return Math.max(0, bottom) + (id === "bird" ? Math.max(0.5, Math.min(8, depth)) : id === "moth" ? Math.max(0.8, Math.min(5.2, depth)) : 1.2);
+    if (mode === "air") return Math.max(0, bottom) + Math.max(id === "moth" ? 0.8 : 0.075, Math.min(flightCeiling(id), depth));
     if (mode === "water" || mode === "both" && bottom < -0.5) return Math.max(bottom + 0.08, Math.min(-s * 2 - 0.09, -depth - s * 0.7));
     return bottom + 0.018;
   }
@@ -234,6 +235,114 @@
     return web;
   }
 
+  // src/flight.js
+  var profiles = {
+    bird: { food: "moth", range: 26, speed: 21, windup: 0.22, recover: 0.62, lift: 2.2, reach: 0.83 },
+    bee: { food: "mite", range: 12, speed: 12, windup: 0.14, recover: 0.48, lift: 1.1, reach: 0.52 }
+  };
+  var isFlier = (form2) => Object.hasOwn(profiles, form2);
+  var center = (a) => ({ x: a.x, y: a.y + bodySize(a) * 0.75, z: a.z });
+  var distance3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+  var floorAt = (x, z) => Math.max(0, ground(x, z)) + 0.075;
+  function approachClear(hero2, eye, spot, solids) {
+    const size = bodySize(hero2), radius = size * 0.6;
+    const left = Math.min(eye.x, spot.x) - radius, right = Math.max(eye.x, spot.x) + radius;
+    const near = Math.min(eye.z, spot.z) - radius, far = Math.max(eye.z, spot.z) + radius;
+    const corridor = [];
+    for (const o of solids) {
+      if (o.x + o.r < left || o.x - o.r > right || o.z + o.r < near || o.z - o.r > far) continue;
+      corridor.push({ x: o.x, z: o.z, r: o.r + radius, base: o.base - size * 0.9, top: o.top + size * 0.75 });
+    }
+    return silkPathClear(eye, spot, corridor);
+  }
+  function visibleQuarry(hero2, items, solids) {
+    const p = profiles[hero2.form], eye = center(hero2), near = [];
+    for (const a of items) {
+      if (!a.live || a.type !== p.food || a.predator) continue;
+      const spot = center(a), d = distance3(eye, spot);
+      if (d <= p.range && approachClear(hero2, eye, spot, solids)) near.push({ actor: a, d });
+    }
+    return near.sort((a, b) => a.d - b.d).slice(0, 5).map((v) => v.actor);
+  }
+  function chooseQuarry(game2, time, cycle = false) {
+    const targets = visibleQuarry(game2.hero, game2.items, game2.world.solids);
+    const previous = game2.sight?.until > time ? game2.sight : null;
+    const order = previous ? [...previous.targets.filter((a) => targets.includes(a)), ...targets.filter((a) => !previous.targets.includes(a))] : targets;
+    const i = order.indexOf(previous?.selected);
+    const selected = order.length ? order[(i < 0 ? 0 : i + Number(cycle)) % order.length] : null;
+    game2.sight = { targets: order, selected, until: time + 7 };
+    game2.airTarget = selected;
+    return selected;
+  }
+  function beginFlight(hero2, target, time) {
+    const d = distance3(center(hero2), center(target));
+    return {
+      kind: hero2.form,
+      target,
+      start: { x: hero2.x, y: hero2.y, z: hero2.z },
+      since: time,
+      phase: "windup",
+      u: 0,
+      hit: false,
+      history: [],
+      distance: d,
+      slope: 0
+    };
+  }
+  function sweep(hero2, end, solids) {
+    const start = { x: hero2.x, y: hero2.y, z: hero2.z }, d = distance3(start, end), steps = Math.max(1, Math.ceil(d / 0.12)), size = bodySize(hero2);
+    for (let i = 1; i <= steps; i++) {
+      const u = i / steps, x = start.x + (end.x - start.x) * u, z = start.z + (end.z - start.z) * u;
+      const y = Math.max(floorAt(x, z), start.y + (end.y - start.y) * u);
+      if (blocked(x, z, y, size * 0.6, size * 1.65, solids)) return false;
+      Object.assign(hero2, { x, y, z });
+    }
+    return true;
+  }
+  function stepFlight(game2, time, dt) {
+    const f = game2.flight, hero2 = game2.hero, p = profiles[f.kind], a = f.target;
+    const elapsed = time - f.since;
+    function recover(hit) {
+      f.phase = "recover";
+      f.since = time;
+      f.hit = hit;
+      f.u = 0;
+      f.recoveryY = hero2.y;
+      return hit ? "hit" : "miss";
+    }
+    if (f.phase === "recover") {
+      f.u = Math.min(1, elapsed / p.recover);
+      const ease2 = 1 - (1 - f.u) ** 2;
+      sweep(hero2, { x: hero2.x, y: f.recoveryY + p.lift * ease2, z: hero2.z }, game2.world.solids);
+      if (f.u === 1) game2.flight = null;
+      return null;
+    }
+    if (!a.live || !game2.items.includes(a)) return recover(false);
+    const end = center(a), here = center(hero2), gap = distance3(here, end);
+    if (!silkPathClear(here, end, game2.world.solids)) return recover(false);
+    const dx = end.x - here.x, dz = end.z - here.z, h = Math.hypot(dx, dz);
+    if (h > 0.04) hero2.angle = Math.atan2(dx, dz);
+    f.slope = Math.max(-0.7, Math.min(1.25, Math.atan2(here.y - end.y, h)));
+    if (f.phase === "windup") {
+      f.u = Math.min(1, elapsed / p.windup);
+      if (f.u === 1) {
+        f.phase = "dive";
+        f.since = time;
+        f.u = 0;
+      }
+      return null;
+    }
+    if (elapsed > f.distance / p.speed + 1.1 || gap > p.range + 2) return recover(false);
+    f.history.push({ x: hero2.x, y: hero2.y, z: hero2.z, angle: hero2.angle, t: time });
+    if (f.history.length > 12) f.history.shift();
+    const step = Math.min(1, p.speed * dt / Math.max(1e-3, gap));
+    const open = sweep(hero2, { x: hero2.x + dx * step, y: hero2.y + (end.y - here.y) * step, z: hero2.z + dz * step }, game2.world.solids);
+    f.u = Math.max(0, Math.min(1, 1 - distance3(center(hero2), end) / Math.max(0.01, f.distance)));
+    if (!open) return recover(false);
+    if (distance3(center(hero2), end) <= p.reach) return recover(true);
+    return null;
+  }
+
   // src/plates.js
   var directory = "assets/";
   var fauna = /* @__PURE__ */ new Map();
@@ -304,9 +413,12 @@
     samples.set(name, levels);
     return levels;
   }
-  function animalPlate(name) {
+  function animalPlate(name, pose) {
     const model = fauna.get(name);
-    return model && ready(model.img) ? model : null;
+    if (!model || !ready(model.img)) return null;
+    if (!model.poses?.[pose]) return model;
+    const img = asset("fauna/" + model.poses[pose] + ".webp");
+    return ready(img) ? { ...model, img } : model;
   }
   function habitatPlate(name) {
     const model = habitat.get(name);
@@ -592,11 +704,29 @@
   function feedingPose(game2, time) {
     const m = game2.meal;
     if (!m) return null;
+    const hero2 = game2.hero;
+    if (m.carrier && hero2.form === m.carrier) {
+      const bird = m.carrier === "bird", u = (time - m.t) / (bird ? 0.86 : 0.64);
+      if (u < 0 || u >= 1) return null;
+      const grab = Math.min(1, u / 0.18), swallow = Math.max(0, (u - 0.58) / 0.42), shrink = swallow * swallow * (3 - 2 * swallow);
+      const forward = hero2.size * (bird ? 0.36 + 0.22 * shrink : -0.36 + 0.62 * shrink);
+      const x = hero2.x + Math.sin(hero2.angle) * forward, z = hero2.z + Math.cos(hero2.angle) * forward;
+      const y = hero2.y + hero2.size * (bird ? 0.14 + 0.62 * shrink : 0.35 + 0.25 * shrink);
+      return {
+        type: m.type,
+        x: m.x + (x - m.x) * grab,
+        y: m.y + (y - m.y) * grab,
+        z: m.z + (z - m.z) * grab,
+        angle: hero2.angle + 0.42 * grab,
+        scale: Math.max(0.03, 1 - shrink),
+        pose: { wing: -0.66 * grab, roll: 0.57 * grab }
+      };
+    }
     const f = (time - m.t) / (m.hostile ? 0.96 : 0.78);
     if (f < 0 || f >= 1) return null;
     const tumble = Math.min(1, f / 0.58), decay = Math.max(0, (f - 0.32) / 0.68), t = decay * decay * (3 - 2 * decay);
     const [roll, pitch, lift, squash] = falls[m.type] || falls.microbe;
-    const hero2 = game2.hero, reach = hero2.size * 0.58, feed = m.hostile ? 0 : t;
+    const reach = hero2.size * 0.58, feed = m.hostile ? 0 : t;
     const end = Math.sin(Math.PI * tumble * 0.52);
     return {
       type: m.type,
@@ -706,6 +836,33 @@
       const u2 = clamp01((t - game2.dodge.t) / 0.31);
       return { roll: Math.sin(Math.PI * u2) * game2.dodge.side * 0.83, pitch: -Math.sin(Math.PI * u2) * 0.22, stretch: 1 + 0.14 * Math.sin(Math.PI * u2) };
     }
+    const flight = game2.flight;
+    if (flight) {
+      const u2 = flight.u, wind = flight.phase === "windup", dive = flight.phase === "dive";
+      const brake = wind ? u2 : dive ? 0 : 1 - u2;
+      if (flight.kind === "bird") {
+        const extend = dive ? Math.max(0.1, u2) : wind ? u2 * 0.3 : 1 - u2;
+        return {
+          wing: wind ? 0.66 * u2 : dive ? -0.47 : 0.75 * brake,
+          tip: dive ? 0.98 : 0.25 * brake,
+          pitch: wind ? -0.19 * u2 : dive ? flight.slope : -0.52 * brake,
+          foot: extend,
+          grip: flight.hit ? brake : 0,
+          bend: 0.08 * brake,
+          stretch: dive ? 1.07 : 1,
+          plate: dive ? "hunt" : brake > 0.2 ? "upstroke" : null
+        };
+      }
+      const sting = dive ? 0.72 + 0.28 * u2 : wind ? 0.32 * u2 : brake;
+      return {
+        abdomen: -1.12 * sting,
+        legs: 0.3 * sting,
+        pitch: wind ? -0.21 * u2 : dive ? -0.32 * sting : 0.18 * brake,
+        wing: 0.23 * brake,
+        roll: 0.08 * Math.sin(Math.PI * u2),
+        plate: sting > 0.45 ? "sting" : "upstroke"
+      };
+    }
     const a = game2.swing;
     if (!a) return {};
     const u = clamp01((t - a.t) / a.duration);
@@ -742,6 +899,134 @@
       default:
         return {};
     }
+  }
+
+  // src/flight-art.js
+  var clamp2 = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  function birdRibbon(ctx3, screen, history, size, side, opacity, time) {
+    let prior;
+    for (let i = 0; i < history.length; i++) {
+      const p = history[i], age = time - p.t, strength = 1 - clamp2(age / 0.31, 0, 1);
+      if (strength === 0) {
+        prior = null;
+        continue;
+      }
+      const across = side * size * (1.26 + age * 0.25), aft = size * 0.46;
+      const point = screen(
+        p.x + Math.cos(p.angle) * across - Math.sin(p.angle) * aft,
+        p.y + size * (0.88 + age * 0.75),
+        p.z - Math.sin(p.angle) * across - Math.cos(p.angle) * aft
+      );
+      if (prior && point && Math.hypot(prior.x - point.x, prior.y - point.y) < 125) {
+        ctx3.beginPath();
+        ctx3.moveTo(prior.x, prior.y);
+        ctx3.lineTo(point.x, point.y);
+        ctx3.lineWidth = clamp2(point.k * size * 0.012, 0.7, 2.4) * (0.66 + 0.34 * strength);
+        ctx3.strokeStyle = "rgba(195,229,231," + opacity * strength * 0.66 + ")";
+        ctx3.stroke();
+      }
+      prior = point;
+    }
+  }
+  function pollen(ctx3, screen, history, size, opacity, time) {
+    for (let i = 0; i < history.length; i++) {
+      const p = history[i], age = time - p.t;
+      if (age < 0 || age > 0.38) continue;
+      const phase = p.t * 27.4;
+      const spread = size * (0.19 + age * 0.95), up = size * (0.78 + age * 2);
+      const sx = Math.cos(phase) * spread, sz = Math.sin(phase) * spread;
+      const px = p.x + sx, py = p.y + up, pz = p.z + sz;
+      const mote = screen(px, py, pz);
+      if (!mote) continue;
+      const tail = screen(px + sx * 0.16, py + size * 0.14, pz + sz * 0.16);
+      const strength = opacity * (1 - age / 0.38);
+      if (tail && Math.hypot(mote.x - tail.x, mote.y - tail.y) < 24) {
+        ctx3.beginPath();
+        ctx3.moveTo(mote.x, mote.y);
+        ctx3.lineTo(tail.x, tail.y);
+        ctx3.lineWidth = 0.96;
+        ctx3.strokeStyle = "rgba(239,191,94," + strength * 0.48 + ")";
+        ctx3.stroke();
+      }
+      const radius = clamp2(mote.k * size * (0.018 + 7e-3 * Math.sin(phase)), 0.72, 2.3);
+      ctx3.beginPath();
+      ctx3.arc(mote.x, mote.y, radius, 0, Math.PI * 2);
+      ctx3.fillStyle = "rgba(255,218,123," + strength * 0.78 + ")";
+      ctx3.fill();
+    }
+  }
+  function targetMark(ctx3, point, target, selected, bee, alpha) {
+    const radius = clamp2(point.k * bodySize(target) * (bee ? 0.91 : 1.14), bee ? 5 : 7, bee ? 23 : 34);
+    const corner = Math.min(6, radius * 0.42), yRadius = radius * 0.77;
+    ctx3.beginPath();
+    for (const side of [-1, 1]) {
+      if (bee) {
+        const y = point.y + yRadius;
+        ctx3.moveTo(point.x + side * (radius + 1), y - 3);
+        ctx3.lineTo(point.x + side * radius, y);
+        ctx3.lineTo(point.x + side * (radius - corner), y + 2);
+      } else {
+        for (const up of [-1, 1]) {
+          const x = point.x + side * radius, y = point.y + up * yRadius;
+          ctx3.moveTo(x - side * corner, y);
+          ctx3.lineTo(x, y);
+          ctx3.lineTo(x, y - up * corner);
+        }
+      }
+    }
+    if (selected && !bee) {
+      ctx3.moveTo(point.x - 2.5, point.y - yRadius - 3.8);
+      ctx3.lineTo(point.x, point.y - yRadius - 1.2);
+      ctx3.lineTo(point.x + 2.5, point.y - yRadius - 3.8);
+    }
+    ctx3.lineWidth = selected ? 3.4 : 2.7;
+    ctx3.strokeStyle = "rgba(24,40,38," + 0.7 * alpha + ")";
+    ctx3.stroke();
+    ctx3.lineWidth = selected ? 1.37 : 1.05;
+    ctx3.strokeStyle = (bee || selected ? "rgba(255,215,135," : "rgba(201,232,217,") + alpha + ")";
+    ctx3.stroke();
+  }
+  function drawFlight(ctx3, project2, game2, time) {
+    const hero2 = game2.hero, bee = hero2.form === "bee";
+    if (!bee && hero2.form !== "bird") return;
+    const width2 = ctx3.canvas.clientWidth || ctx3.canvas.width, height2 = ctx3.canvas.clientHeight || ctx3.canvas.height;
+    const screen = (x, y, z) => {
+      const p = project2(x, y, z);
+      return p && p.depth > 0.19 && p.x > 3 && p.x < width2 - 3 && p.y > 3 && p.y < height2 - 3 ? p : null;
+    };
+    const size = bodySize(hero2), eye = { x: hero2.x, y: hero2.y + size * 1.05, z: hero2.z };
+    const strokeTarget = (actor, selected2, alpha) => {
+      if (!actor || actor.live === false || actor.hp <= 0) return false;
+      const center2 = { x: actor.x, y: actor.y + bodySize(actor) * 0.85, z: actor.z };
+      const p = screen(center2.x, center2.y, center2.z);
+      if (!p || p.x < 16 || p.x > width2 - 16 || p.y < 17 || p.y > height2 - 17) return false;
+      if (!silkPathClear(eye, center2, game2.world.solids)) return false;
+      targetMark(ctx3, p, actor, selected2, bee, alpha);
+      return true;
+    };
+    ctx3.save();
+    ctx3.lineCap = "round";
+    ctx3.lineJoin = "round";
+    const flight = game2.flight;
+    if (flight?.phase === "dive" && flight.history?.length > 1) {
+      const opacity = 0.42 + 0.58 * Math.sin(Math.PI * clamp2(flight.u, 0, 1));
+      if (bee) pollen(ctx3, screen, flight.history, size, opacity, time);
+      else for (const side of [-1, 1]) birdRibbon(ctx3, screen, flight.history, size, side, opacity, time);
+    }
+    const sight = game2.sight, scan = !bee && sight && sight.until > time;
+    const selected = flight?.target?.live ? flight.target : scan && sight.selected?.live ? sight.selected : game2.airTarget;
+    let count = strokeTarget(selected, true, 0.92) ? 1 : 0;
+    if (scan) {
+      const alpha = 0.76 * clamp2((sight.until - time) / 0.28, 0, 1);
+      const seen = /* @__PURE__ */ new Set([selected]);
+      for (const target of sight.targets) {
+        if (count >= 5) break;
+        if (seen.has(target)) continue;
+        seen.add(target);
+        if (strokeTarget(target, false, alpha)) count++;
+      }
+    }
+    ctx3.restore();
   }
 
   // src/silk-art.js
@@ -862,7 +1147,7 @@
     divide: (u) => [Math.cos(u * 4.2) * 0.87, 0.66 + Math.sin(u * 5) * 0.2, 0.4 + 1.28 * Math.sin(u * 2.65)]
   };
   var colors = { silk: "#c7f5e9", root: "#d1d788", vine: "#c1e395", hammer: "#e8bd88", sting: "#efcf79", stoop: "#d6ddd9", coil: "#cbbacc", engulf: "#c4edbd", divide: "#decbaa" };
-  function sweep(ctx3, project2, actor, shape, fraction, alpha, color, size, doubled = false) {
+  function sweep2(ctx3, project2, actor, shape, fraction, alpha, color, size, doubled = false) {
     const start = Math.max(0, fraction - 0.59), sa = Math.sin(actor.angle), ca = Math.cos(actor.angle), curve = curves[shape];
     if (!curve || fraction <= start) return;
     ctx3.strokeStyle = color;
@@ -910,7 +1195,7 @@
       const u = (time - swing.t) / swing.duration, move = moves[hero2.form];
       if ((move !== "silk" || swing.webBite) && u > 0.24 && u < 1) {
         const v = (u - 0.24) / 0.76;
-        sweep(ctx3, project2, { ...hero2, angle: swing.angle }, move, v, Math.sin(Math.PI * v), colors[move] || "#e7dfb9", bodySize(hero2), ["engulf", "divide", "silk", "snap", "stoop"].includes(move));
+        sweep2(ctx3, project2, { ...hero2, angle: swing.angle }, move, v, Math.sin(Math.PI * v), colors[move] || "#e7dfb9", bodySize(hero2), ["engulf", "divide", "silk", "snap", "stoop"].includes(move));
       }
     }
     for (const e of game2.enemies) {
@@ -936,7 +1221,7 @@
         }
       } else if (e.phase === "strike") {
         const u = Math.min(1, e.age / h.strike), move = { ape: "hammer", pike: "sting", hunter: "snap", mite: "stoop", mantis: "snap" }[e.type];
-        sweep(ctx3, project2, e, move, u, 0.94 * Math.sin(Math.PI * u), "#ffc39e", size, e.type === "mantis");
+        sweep2(ctx3, project2, e, move, u, 0.94 * Math.sin(Math.PI * u), "#ffc39e", size, e.type === "mantis");
       }
     }
     const hit = game2.impact;
@@ -1147,19 +1432,19 @@
   function plant(name, x, y, z, h, phase, t) {
     const m = habitatPlate(name);
     if (!m) return;
-    const scale = h / m.height, center = project(x, y + h * 0.46, z), anchor = project(x, y, z);
-    if (!center || !anchor || center.depth < 0.35) return;
+    const scale = h / m.height, center2 = project(x, y + h * 0.46, z), anchor = project(x, y, z);
+    if (!center2 || !anchor || center2.depth < 0.35) return;
     const distance2 = Math.hypot(x - camera.x, z - camera.z);
     if (submergedView && distance2 > (y > 0.1 ? 35 : 47)) return;
-    const size = center.k * m.size * scale;
+    const size = center2.k * m.size * scale;
     const atX = anchor.x, atY = anchor.y, left = -size * m.anchor[0], top = -size * m.anchor[1];
     if (size < 2 || atX + left > width || atX + left + size < 0 || atY + top > height || atY + top + size < 0) return;
     const alpha = submergedView ? Math.min(1, Math.max(0, (47 - distance2) / 26)) : Math.min(1, Math.max(0.18, (93 - distance2) / 36));
     if (alpha < 0.025) return;
     if (distance2 < 19) contact(x, y, z, h * (name === "rock" ? 1 : 0.32), 0.4);
-    commands.push({ depth: center.depth, draw() {
+    commands.push({ depth: center2.depth, draw() {
       ctx2.save();
-      if (distance2 > 12) maskWithTerrain(ctx2, width, height, atX + left, atY + top, atX + left + size, atY + top + size, center.depth);
+      if (distance2 > 12) maskWithTerrain(ctx2, width, height, atX + left, atY + top, atX + left + size, atY + top + size, center2.depth);
       ctx2.globalAlpha = alpha;
       ctx2.translate(atX, atY);
       ctx2.scale(Math.sin(phase) < 0 ? -1 : 1, 1);
@@ -1169,7 +1454,8 @@
     } });
   }
   function animal(name, x, y, z, scale, angle, t, hit = 0, hero2 = false, pose = {}) {
-    const m = animalPlate(name);
+    const flier = name === "bird" || name === "bee", flap = Math.sin(t * (name === "bee" ? 30 : 6)) > 0.35;
+    const m = animalPlate(name, pose.plate || (flier && flap ? "upstroke" : void 0));
     if (!m) return;
     const pos = project(x, y + (m.centerY + (pose.lift || 0)) * scale + Math.sin(t * (hero2 ? 3 : 2.3)) * 0.028 * scale, z);
     if (!pos || pos.depth < 0.17) return;
@@ -1292,7 +1578,7 @@
     }
     if (!intro) {
       const guide = game2.guide;
-      if (guide?.live && !game2.huntComplete) {
+      if (guide?.live && !game2.huntComplete && hero2.form !== "bird" && hero2.form !== "bee") {
         const p = project(guide.x, guide.y + bodySize(guide) * 1.65, guide.z);
         if (p && p.depth < 38 && p.x > 24 && p.x < width - 24 && p.y > 32 && p.y < height - 32) {
           const y = p.y - 5;
@@ -1320,6 +1606,7 @@
         ctx2.fill();
       }
       drawCombat(ctx2, project, game2, time);
+      drawFlight(ctx2, project, game2, time);
       if (game2.web) drawSilk(ctx2, project, hero2, game2.web, time, game2.firstPerson);
       for (const a of [...game2.items, ...game2.enemies]) {
         if (!a.live || a.hp === a.maxHP) continue;
@@ -1349,9 +1636,9 @@
     fish: { name: "Glassfin", prey: "minnow", quota: 14, action: "Bite", next: ["lungfish"] },
     lungfish: { name: "Lungfish", prey: "minnow", quota: 14, action: "Snap", next: ["spider", "bee"] },
     spider: { name: "Silk hunter", prey: "moth", quota: 10, action: "Cast web", next: ["bird"] },
-    bird: { name: "Canopy bird", prey: "moth", quota: 12, action: "Swoop", next: ["ape"] },
+    bird: { name: "Canopy bird", prey: "moth", quota: 12, action: "Talon dive", next: ["ape"] },
     ape: { name: "Toolmaker", prey: "mite", quota: 12, action: "Strike", next: ["bee"] },
-    bee: { name: "Pollinator", prey: "mite", quota: 10, action: "Sting", next: ["cleaner", "sapling"] },
+    bee: { name: "Pollinator", prey: "mite", quota: 10, action: "Drop sting", next: ["cleaner", "sapling"] },
     cleaner: { name: "Cleaner fish", prey: "leech", quota: 12, action: "Pluck", next: ["worm"] },
     worm: { name: "Earthworm", prey: "leech", quota: 10, action: "Pinch", next: ["snail"] },
     snail: { name: "Shell grazer", prey: "mite", quota: 12, action: "Crush", next: ["sapling"] },
@@ -1442,6 +1729,11 @@
       if (type === "moth" && x === 0 && z === 0) {
         prey("glade/moth/0", 4, 0.8, 0.49, 2.4);
         prey("glade/moth/1", 6.8, 0.3, 1.35, 2.4);
+      }
+      if (type === "mite" && x === 0 && z === 0) {
+        prey("glade/mite/0", 4, 0.8, 0.67, 0);
+        prey("glade/mite/1", 6.8, 0.3, 1.8, 0);
+        prey("glade/mite/2", 2.1, 1.9, 2.4, 0);
       }
       if (type === "minnow") {
         if (x === 0 && z === 0) {
@@ -1565,6 +1857,8 @@
     return null;
   }
   var visits = {
+    bird: { form: "bird", x: 2.6, z: 1.3, depth: 7.6, yaw: 1.6, angle: 1.6, pitch: 0.43, zoom: 1.03 },
+    pollinator: { form: "bee", x: 2.6, z: 1.3, depth: 3.8, yaw: 1.7, angle: 1.6, pitch: 0.4, zoom: 0.91 },
     forest: { form: "ape", x: 3.4, z: 1.8, depth: 0.25, yaw: -0.31, angle: 0.66, pitch: 0.15, zoom: 0.8 },
     spider: { form: "spider", x: 2.6, z: 1.3, depth: 1.2, yaw: -0.1, angle: 3.05, pitch: -0.08, zoom: 0.94 },
     reef: { form: "fish", x: 0.8, z: 34.4, depth: 4.3, yaw: -0.35, angle: -2.65, pitch: 0.02, zoom: 0.93 }
@@ -1609,9 +1903,9 @@
     fish: "Follow a shoal or use Find prey. Match the fish\u2019s depth before biting.",
     lungfish: "Surface to refill your air. Your fins can carry you across wet sand.",
     spider: "G faces a moth. Space casts up to 11 m and reels it down. Press Space again to bite.",
-    bird: "Rise above rocks, then descend to the height of your prey.",
+    bird: "G scans for moths. Press G again to switch prey. Space dives and grabs with your talons.",
     ape: "A tool strike hits harder against ground-dwelling mites.",
-    bee: "Fly just above the plants and sting the mites feeding nearby.",
+    bee: "F rises and C descends. G spots mites, even directly below you. Space drops into a sting.",
     cleaner: "Remove leeches in the shallows. Match their depth before you bite.",
     worm: "Follow the damp bank. Land leeches are within reach from the soil.",
     snail: "Your shell absorbs one predator hit each life as a grazer.",
@@ -1704,9 +1998,13 @@
   function growthSize() {
     return scaleOf(hero.form) * (0.68 + 0.32 * maturity());
   }
-  function focusPrey() {
-    const a = nearest();
+  function downwardLimit() {
+    return game.firstPerson && isFlier(hero.form) ? 1.49 : 0.96;
+  }
+  function focusPrey(a) {
+    if (!a) a = isFlier(hero.form) ? visibleQuarry(hero, game.items, world.solids)[0] : nearest();
     if (!a) return;
+    if (isFlier(hero.form)) game.airTarget = a;
     game.guide = a;
     game.pinnedPrey = a;
     const dx = a.x - hero.x, dz = a.z - hero.z;
@@ -1715,12 +2013,30 @@
     let eye = hero.y + size * (game.firstPerson ? 1.05 : 4.05);
     if (swimming) eye = Math.min(-0.13, eye);
     const behind = game.firstPerson ? 0 : 7.2 * Math.sqrt(size) * (game.zoom || 1), base = game.firstPerson ? 0.055 : swimming ? 0.09 : 0.15;
-    game.pitch = Math.max(-0.98, Math.min(0.96, Math.atan2(eye - a.y - bodySize(a) * 0.85, Math.hypot(dx, dz) + behind) - base));
+    game.pitch = Math.max(-0.98, Math.min(downwardLimit(), Math.atan2(eye - a.y - bodySize(a) * 0.85, Math.hypot(dx, dz) + behind) - base));
+  }
+  function findAction() {
+    if (!isFlier(hero.form)) {
+      focusPrey();
+      return;
+    }
+    if (game.flight) return;
+    const a = chooseQuarry(game, clock, true);
+    if (!a) {
+      game.pinnedPrey = null;
+      game.guide = null;
+      say("No visible prey \xB7 move beyond the tree cover");
+      return;
+    }
+    focusPrey(a);
+    const sight = game.sight, n = sight.targets.length;
+    say((hero.form === "bird" ? "Eagle Eye" : "Bug sight") + " \xB7 " + (sight.targets.indexOf(a) + 1) + " / " + n + (n > 1 ? " \xB7 G switches target" : ""));
+    guideReadout();
   }
   function guideReadout() {
     const a = game.guide;
     if (!a?.live) {
-      $("preyCue").textContent = "Explore the habitat to find prey.";
+      $("preyCue").textContent = isFlier(hero.form) ? "Fly toward a clearing and press G to scan." : "Explore the habitat to find prey.";
       return;
     }
     const dx = a.x - hero.x, dz = a.z - hero.z, delta = Math.atan2(dx, -dz) - game.yaw;
@@ -1748,6 +2064,8 @@
     $("hpbar").value = health;
     $("hpbar").classList.toggle("low", health === 1);
     $("growth").textContent = (kills >= quota() ? "Fully grown" : "Growing") + " \xB7 " + Math.round(100 * growthSize() / scaleOf(hero.form)) + "% adult size";
+    $("findLabel").textContent = hero.form === "bird" ? "Eagle Eye" : hero.form === "bee" ? "Spot bugs" : "Find prey";
+    $("findPrey").title = isFlier(hero.form) ? "Spot visible prey. Press again to switch target." : "Face nearest prey";
     $("findPrey").hidden = ready2;
     $("preyCue").hidden = ready2;
     $("objectiveTitle").textContent = ready2 ? "EVOLUTION READY" : "HUNT";
@@ -1818,11 +2136,14 @@
     game.swing = null;
     game.dodge = null;
     game.web = null;
+    game.flight = null;
+    game.sight = null;
+    game.airTarget = null;
     hero.form = next;
     kills = 0;
     hero.size = growthSize();
     shellGuard = next === "snail";
-    swimDepth = next === "lungfish" ? 0.25 : 2.4;
+    swimDepth = next === "lungfish" ? 0.25 : next === "bird" ? 5 : 2.4;
     reserve = 1;
     exposure = 0;
     game.meal = null;
@@ -1983,19 +2304,36 @@
   }
   function pause() {
     if (game.defeat) return;
-    panel("PAUSED", "Beneath the roots", "WASD moves. Drag the world or use Q/R to turn. F rises and C dives while swimming. Space attacks, Shift dodges, E evolves, T opens skills, M opens the atlas, and V switches camera. Drag vertically or use I/K to look up and down. G faces the nearest prey.");
+    panel("PAUSED", "Beneath the roots", "WASD moves. Drag the world or use Q/R to turn. F rises and C descends while swimming or flying. Space attacks, Shift dodges, E evolves, T opens skills, M opens the atlas, and V switches camera. Drag vertically or use I/K to look up and down. G faces prey. While flying, press G again to switch prey and Space to strike.");
     $("actions").append(button("Resume", resume));
     if (visit) $("actions").append(button("Return to title", () => openVisit("")));
   }
   function switchCamera() {
     game.firstPerson = !game.firstPerson;
+    if (isFlier(hero.form) && game.airTarget?.live) focusPrey(game.airTarget);
     game.snap = true;
     updateHUD();
     say(game.firstPerson ? "First person \xB7 Drag or Q/R to look" : "Third person");
   }
   function attack() {
-    if (!playing || game.defeat || cooldown > 0 || clock - (game.dodge?.t ?? -1) < 0.31) return;
+    if (!playing || game.defeat || game.flight || cooldown > 0 || clock - (game.dodge?.t ?? -1) < 0.31) return;
     const duration = learned.has("reflex") ? 0.35 : 0.54;
+    if (isFlier(hero.form)) {
+      const targets = visibleQuarry(hero, game.items, world.solids), target2 = targets.includes(game.airTarget) ? game.airTarget : targets[0];
+      if (target2) {
+        game.airTarget = target2;
+        game.guide = target2;
+        game.pinnedPrey = target2;
+        game.flight = beginFlight(hero, target2, clock);
+        game.swing = null;
+        return;
+      }
+      if (!game.enemies.some((e) => e.live && bodyDistance(e) <= bodySize(hero) * 3.4 && clearStrike(hero, e, world.solids))) {
+        say("No clear strike \xB7 G scans for prey");
+        cooldown = 0.45;
+        return;
+      }
+    }
     if (hero.form === "spider") {
       const web = game.web;
       if (web && ["flight", "reel"].includes(web.phase)) return;
@@ -2041,7 +2379,7 @@
       say("Blocked \xB7 move around the obstacle");
       return;
     }
-    prey.hp -= (learned.has("bite") ? 2 : 1) + (hero.form === "ape" ? 1 : 0);
+    prey.hp -= (learned.has("bite") ? 2 : 1) + (hero.form === "ape" || swing.airHit ? 1 : 0);
     prey.hit = 0.28;
     game.impact = { x: prey.x, y: prey.y + bodySize(prey) * 0.8, z: prey.z, size: bodySize(prey), type: prey.type, t: clock, killed: prey.hp <= 0 };
     if (swing.webBite) {
@@ -2054,7 +2392,7 @@
       return;
     }
     const hostile = Boolean(prey.predator);
-    game.meal = { x: prey.x, y: prey.y, z: prey.z, angle: prey.angle, type: prey.type, t: clock, hostile };
+    game.meal = { x: prey.x, y: prey.y, z: prey.z, angle: prey.angle, type: prey.type, t: clock, hostile, carrier: swing.airHit ? hero.form : null };
     world.kill(prey);
     if (!hostile) kills++;
     total++;
@@ -2073,6 +2411,7 @@
     game.dodge = { t: clock, ready: clock + 1.85, side: x < 0 ? -1 : 1, dx: (x * c + z * s) / length, dz: (x * s - z * c) / length };
     game.swing = null;
     game.web = null;
+    game.flight = null;
   }
   function receiveStrike(e, profile) {
     if (immunity > 0 || game.defeat || clock - (game.dodge?.t ?? -1) < 0.31) return;
@@ -2095,6 +2434,9 @@
     game.swing = null;
     game.dodge = null;
     game.web = null;
+    game.flight = null;
+    game.sight = null;
+    game.airTarget = null;
     health = 0;
     keys.clear();
     updateHUD();
@@ -2110,6 +2452,9 @@
     game.dodge = null;
     game.swing = null;
     game.web = null;
+    game.flight = null;
+    game.sight = null;
+    game.airTarget = null;
     life++;
     hero.x = checkpoint.x;
     hero.z = checkpoint.z;
@@ -2199,7 +2544,7 @@
     immunity = Math.max(0, immunity - dt);
     const turn = Number(keys.has("r") || keys.has("arrowright")) - Number(keys.has("q") || keys.has("arrowleft"));
     game.yaw += turn * dt * 1.9;
-    game.pitch = Math.max(-0.98, Math.min(0.96, game.pitch + dt * (Number(keys.has("k")) - Number(keys.has("i"))) * 1.25));
+    game.pitch = Math.max(-0.98, Math.min(downwardLimit(), game.pitch + dt * (Number(keys.has("k")) - Number(keys.has("i"))) * 1.25));
     const side = Number(keys.has("d")) - Number(keys.has("a")), forward = Number(keys.has("w") || keys.has("arrowup")) - Number(keys.has("s") || keys.has("arrowdown"));
     const len = Math.hypot(side, forward) || 1, c = Math.cos(game.yaw), s = Math.sin(game.yaw), dx = (side * c + forward * s) / len, dz = (side * s - forward * c) / len;
     const speed = 9 * (learned.has("swim") ? 1.25 : 1) * (hero.form === "bird" ? 1.35 : 1);
@@ -2208,12 +2553,22 @@
     const size = bodySize(hero), mode = modeOf(hero.form), bottom = ground(hero.x, hero.z);
     const mobility = mode === "water" && hero.y + size * 0.85 >= 0 ? 0.25 : mode === "land" && bottom < -1 ? 0.48 : hero.form === "lungfish" && bottom >= 0 ? 0.65 : 1;
     const pace = speed * Math.sqrt(size) * mobility;
-    if (hero.form === "bird") swimDepth = Math.max(0.5, Math.min(8, swimDepth + (Number(keys.has("f")) - Number(keys.has("c"))) * dt * 3.3));
-    else swimDepth = Math.max(0.2, Math.min(Math.max(0.3, -ground(hero.x, hero.z)), swimDepth + (Number(keys.has("c")) - Number(keys.has("f"))) * dt * 2.9));
-    const evade = game.dodge, evading = evade && clock - evade.t < 0.31;
-    const burst = evading ? Math.sqrt(size) * 15 : 0;
-    travel(hero, hero.form, (dx * pace + (evading ? evade.dx * burst : 0)) * dt, (dz * pace + (evading ? evade.dz * burst : 0)) * dt, world.solids, swimDepth);
-    if ((side || forward) && (!game.swing || clock - game.swing.t > game.swing.duration)) hero.angle = Math.atan2(dx, dz);
+    if (game.flight) {
+      const target = game.flight.target, result = stepFlight(game, clock, dt);
+      swimDepth = Math.max(0.075, hero.y - Math.max(0, ground(hero.x, hero.z)));
+      if (result === "hit") {
+        game.swing = { target, t: clock, duration: 0.16, reach: hero.form === "bird" ? 1.05 : 0.75, airHit: true, resolved: true, angle: hero.angle };
+        landAttack();
+      } else if (result === "miss") say("Prey escaped \xB7 find a clear approach");
+    } else {
+      if (isFlier(hero.form)) swimDepth = Math.max(0.075, Math.min(flightCeiling(hero.form), swimDepth + (Number(keys.has("f")) - Number(keys.has("c"))) * dt * (hero.form === "bird" ? 4.5 : 3.3)));
+      else swimDepth = Math.max(0.2, Math.min(Math.max(0.3, -bottom), swimDepth + (Number(keys.has("c")) - Number(keys.has("f"))) * dt * 2.9));
+      const evade = game.dodge, evading = evade && clock - evade.t < 0.31;
+      const burst = evading ? Math.sqrt(size) * 15 : 0;
+      travel(hero, hero.form, (dx * pace + (evading ? evade.dx * burst : 0)) * dt, (dz * pace + (evading ? evade.dz * burst : 0)) * dt, world.solids, swimDepth);
+      if (isFlier(hero.form)) swimDepth = hero.y - Math.max(0, ground(hero.x, hero.z));
+      if ((side || forward) && (!game.swing || clock - game.swing.t > game.swing.duration)) hero.angle = Math.atan2(dx, dz);
+    }
     const environment = respiration(hero.form, hero.x, hero.y, hero.z, size);
     if (environment.wet && Math.abs(playerLevel(hero.form, hero.x, hero.z, swimDepth, size) - hero.y) > 0.1) swimDepth = Math.max(0.2, environment.depth);
     breathe(dt, environment);
@@ -2252,7 +2607,13 @@
     }
     if (clock >= guideAt || !game.guide?.live) {
       if (game.pinnedPrey && (!game.pinnedPrey.live || distance(game.pinnedPrey) > 40 || !game.items.includes(game.pinnedPrey))) game.pinnedPrey = null;
-      game.guide = game.pinnedPrey || nearest();
+      if (isFlier(hero.form)) {
+        const targets = visibleQuarry(hero, game.items, world.solids);
+        if (game.sight && clock >= game.sight.until) game.sight = null;
+        if (!targets.includes(game.pinnedPrey)) game.pinnedPrey = null;
+        game.airTarget = game.pinnedPrey || targets[0] || null;
+        game.guide = game.airTarget;
+      } else game.guide = game.pinnedPrey || nearest();
       guideAt = clock + 0.18;
     }
     updateScout(dt);
@@ -2290,6 +2651,8 @@
   };
   $("forestVisit").onclick = () => openVisit("forest");
   $("reefVisit").onclick = () => openVisit("reef");
+  $("birdVisit").onclick = () => openVisit("bird");
+  $("beeVisit").onclick = () => openVisit("pollinator");
   $("spiderVisit").onclick = () => openVisit("spider");
   if (visit) {
     enterWorld();
@@ -2312,9 +2675,9 @@
     placeForm(hero.form);
     sync();
     game.guide = nearest();
-    if (hero.form === "spider") {
+    if (hero.form === "spider" || isFlier(hero.form)) {
       focusPrey();
-      $("fieldTip").textContent = tips.spider;
+      $("fieldTip").textContent = tips[hero.form];
       formTipUntil = clock + 15;
     }
     updateHUD();
@@ -2331,7 +2694,7 @@
   $("attack").onlostpointercapture = () => keys.delete(" ");
   $("dodge").onclick = dodge;
   $("findPrey").onclick = () => {
-    if (playing) focusPrey();
+    if (playing) findAction();
     $("findPrey").blur();
   };
   $("pause").onclick = pause;
@@ -2352,7 +2715,7 @@
     if (e.repeat) return;
     if (k === "shift") dodge();
     if (k === " ") attack();
-    if (k === "g") focusPrey();
+    if (k === "g") findAction();
     if (k === "e") evolve();
     if (k === "m") atlas();
     if (k === "t") skills();
@@ -2383,7 +2746,7 @@
   $("stage").onpointermove = (e) => {
     if (drag !== null) {
       game.yaw += (e.clientX - drag.x) * 9e-3;
-      game.pitch = Math.max(-0.98, Math.min(0.96, game.pitch + (e.clientY - drag.y) * 6e-3));
+      game.pitch = Math.max(-0.98, Math.min(downwardLimit(), game.pitch + (e.clientY - drag.y) * 6e-3));
       drag = { x: e.clientX, y: e.clientY };
     }
   };
@@ -2401,7 +2764,7 @@
     if (playing && clock > uiAt) {
       $("dodge").disabled = clock < (game.dodge?.ready ?? 0) || !!game.defeat;
       const bottom = ground(hero.x, hero.z), env = game.environment || respiration(hero.form, hero.x, hero.y, hero.z, bodySize(hero)), wet = env.wet;
-      $("depthControls").hidden = env.mode !== "air" && bottom >= 0 || env.mode === "air" && hero.form !== "bird";
+      $("depthControls").hidden = env.mode !== "air" && bottom >= 0;
       $("reserve").hidden = !env.depleted && reserve >= 0.995;
       $("reserveText").textContent = env.label + " \xB7 " + Math.ceil(reserve * env.capacity) + " s" + (env.depleted ? env.mode === "water" ? " \xB7 Return to water" : " \xB7 Rise for air" : " \xB7 Recovering");
       $("reserveBar").value = reserve;

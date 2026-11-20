@@ -143,33 +143,60 @@
     "triangles": 8120
   },
   "bird": {
+    "poses": {
+      "upstroke": "bird-upstroke",
+      "hunt": "bird-hunt"
+    },
     "asset": "bird",
-    "span": 3.7400174140930176,
-    "centerY": 0.9066872596740723,
-    "tile": 192,
+    "span": 5.274466514587402,
+    "centerY": 0.9057737588882446,
+    "tile": 384,
     "views": 8,
     "nodes": [
       "body",
-      "wing_-1",
       "tail",
-      "wing_1"
+      "wing_-1",
+      "wingtip_-1",
+      "leg_-1",
+      "foot_-1",
+      "grip_-1",
+      "hallux_-1",
+      "wing_1",
+      "wingtip_1",
+      "leg_1",
+      "foot_1",
+      "grip_1",
+      "hallux_1"
     ],
-    "vertices": 9932,
-    "triangles": 17004
+    "vertices": 34231,
+    "triangles": 57556
   },
   "bee": {
+    "poses": {
+      "upstroke": "bee-upstroke",
+      "sting": "bee-sting"
+    },
     "asset": "bee",
-    "span": 2.3413643836975098,
-    "centerY": 0.901764988899231,
-    "tile": 192,
+    "span": 2.6559317111968994,
+    "centerY": 0.7641791105270386,
+    "tile": 320,
     "views": 8,
     "nodes": [
       "body",
+      "abdomen",
+      "glass_-1",
       "wing_-1",
-      "wing_1"
+      "leg_-1_0",
+      "leg_-1_1",
+      "leg_-1_2",
+      "glass_1",
+      "wing_1",
+      "leg_1_0",
+      "leg_1_1",
+      "leg_1_2"
     ],
-    "vertices": 4198,
-    "triangles": 7366
+    "vertices": 18673,
+    "triangles": 26546
   },
   "moth": {
     "asset": "moth",

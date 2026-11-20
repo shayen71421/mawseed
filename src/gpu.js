@@ -174,7 +174,7 @@ export function bootGPU(container){
   if(!resident||resident.template!==template){
    if(resident)scene.remove(resident.node)
    const node=template.root.clone(true),parts=[]
-   node.traverse(o=>{if(/wing|fin|tail|^arm_|^leg_|^palp_|jaw|vine|tendril/i.test(o.name))parts.push({o,base:o.rotation.clone()})})
+   node.traverse(o=>{if(/wing|fin|tail|^arm_|^leg_|^palp_|^grip_|^hallux_|^foot_|^abdomen$|jaw|vine|tendril/i.test(o.name))parts.push({o,base:o.rotation.clone()})})
    const mixer=template.animations.length?new T.AnimationMixer(node):null
    if(mixer)for(const clip of template.animations)mixer.clipAction(clip).play()
    resident={node,template,parts,mixer};residents.set(id,resident);scene.add(node)
@@ -195,9 +195,15 @@ export function bootGPU(container){
    o.rotation.copy(base)
    if(/jaw/i.test(key))o.rotation.x+=pose.jaw||0
    else if(/^arm_/.test(key)){o.rotation.x-=(side>0?(pose.arm||0):(pose.offArm??pose.arm??0));o.rotation.z+=side*(pose.spread||0);if(!pose.arm)o.rotation.x+=step*.44*side}
+   else if(key==='abdomen')o.rotation.x+=pose.abdomen||0
+   else if(/^wingtip_/.test(key))o.rotation.y+=side*(pose.tip||0)
+   else if(/^foot_/.test(key))o.rotation.x+=.34*(pose.foot||0)
+   else if(/^grip_/.test(key))o.rotation.x+=.88*(pose.grip||0)
+   else if(/^hallux_/.test(key))o.rotation.x-=.76*(pose.grip||0)
+   else if(/^leg_/.test(key)&&name==='bird')o.rotation.x-=1.12*(pose.foot||0)
    else if(/^leg_|^palp_/.test(key)){o.rotation.z+=side*(pose.legs||0);o.rotation.x-=step*.62*side}
    else if(/tail|vine|tendril/i.test(key))o.rotation.y+=Math.sin(t*6)*.13+(pose.bend||0)
-   else o.rotation.z+=side*(Math.sin(t*(name==='bee'?16:4))*.13+(pose.wing||0))
+   else o.rotation.z+=side*(Math.sin(t*(name==='bee'?30:name==='bird'?6:4))*(name==='bee'?.48:name==='bird'?(pose.tip>.6?.035:.28):.13)+(pose.wing||0))
   }
  }
  // Use the same eight baked views for distant shoals; close fish retain their animated meshes.

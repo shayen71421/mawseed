@@ -48,10 +48,21 @@ const falls={
 }
 export function feedingPose(game,time){
  const m=game.meal;if(!m)return null
+ const hero=game.hero
+ if(m.carrier&&hero.form===m.carrier){
+  const bird=m.carrier==='bird',u=(time-m.t)/(bird?.86:.64)
+  if(u<0||u>=1)return null
+  const grab=Math.min(1,u/.18),swallow=Math.max(0,(u-.58)/.42),shrink=swallow*swallow*(3-2*swallow)
+  const forward=hero.size*(bird?.36+.22*shrink:-.36+.62*shrink)
+  const x=hero.x+Math.sin(hero.angle)*forward,z=hero.z+Math.cos(hero.angle)*forward
+  const y=hero.y+hero.size*(bird?.14+.62*shrink:.35+.25*shrink)
+  return {type:m.type,x:m.x+(x-m.x)*grab,y:m.y+(y-m.y)*grab,z:m.z+(z-m.z)*grab,
+   angle:hero.angle+.42*grab,scale:Math.max(.03,1-shrink),pose:{wing:-.66*grab,roll:.57*grab}}
+ }
  const f=(time-m.t)/(m.hostile?.96:.78);if(f<0||f>=1)return null
  const tumble=Math.min(1,f/.58),decay=Math.max(0,(f-.32)/.68),t=decay*decay*(3-2*decay)
  const [roll,pitch,lift,squash]=falls[m.type]||falls.microbe
- const hero=game.hero,reach=hero.size*.58,feed=m.hostile?0:t
+ const reach=hero.size*.58,feed=m.hostile?0:t
  const end=Math.sin(Math.PI*tumble*.52)
  return {type:m.type,angle:m.angle+(m.type==='shiner'?-1.8:m.type==='moth'?1.22:.34)*end,
   x:m.x+(hero.x+Math.sin(hero.angle)*reach-m.x)*feed,z:m.z+(hero.z+Math.cos(hero.angle)*reach-m.z)*feed,
