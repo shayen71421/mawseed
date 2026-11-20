@@ -14,7 +14,7 @@ export const forms={
  colony:{name:'Cell colony',prey:'microbe',quota:12,action:'Engulf',next:['fish']},
  fish:{name:'Glassfin',prey:'minnow',quota:14,action:'Bite',next:['lungfish']},
  lungfish:{name:'Lungfish',prey:'minnow',quota:14,action:'Snap',next:['spider','bee']},
- spider:{name:'Silk hunter',prey:'moth',quota:10,action:'Web strike',next:['bird']},
+ spider:{name:'Silk hunter',prey:'moth',quota:10,action:'Cast web',next:['bird']},
  bird:{name:'Canopy bird',prey:'moth',quota:12,action:'Swoop',next:['ape']},
  ape:{name:'Toolmaker',prey:'mite',quota:12,action:'Strike',next:['bee']},
  bee:{name:'Pollinator',prey:'mite',quota:10,action:'Sting',next:['cleaner','sapling']},

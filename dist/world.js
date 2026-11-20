@@ -28,71 +28,6 @@
     mod
   ));
 
-  // src/plates.js
-  var directory = "assets/";
-  var fauna = /* @__PURE__ */ new Map();
-  var habitat = /* @__PURE__ */ new Map();
-  var textures = /* @__PURE__ */ new Map();
-  var queued = /* @__PURE__ */ new Map();
-  function asset(file) {
-    if (queued.has(file)) return queued.get(file);
-    const img = new Image();
-    img.decoding = "async";
-    img.src = directory + file;
-    queued.set(file, img);
-    return img;
-  }
-  var ready = (img) => img && img.complete && img.naturalWidth > 0;
-  for (const [dir, map] of [["fauna", fauna], ["habitat", habitat]]) {
-    fetch(directory + dir + "/" + (dir === "fauna" ? "manifest" : "habitat") + ".json").then((r) => r.json()).then((data) => {
-      for (const [key, meta] of Object.entries(data)) {
-        const img = asset(dir + "/" + key + ".webp"), entry = { ...meta, img };
-        map.set(key, entry);
-        if (dir === "habitat") {
-          const grade = () => {
-            const c = document.createElement("canvas");
-            c.width = img.width;
-            c.height = img.height;
-            const g = c.getContext("2d");
-            g.drawImage(img, 0, 0);
-            g.globalCompositeOperation = "source-atop";
-            const tint = g.createLinearGradient(0, 0, 0, c.height);
-            tint.addColorStop(0, "rgba(13,63,52,.29)");
-            tint.addColorStop(0.53, "rgba(13,61,49,.44)");
-            tint.addColorStop(1, "rgba(6,43,41,.72)");
-            g.fillStyle = tint;
-            g.fillRect(0, 0, c.width, c.height);
-            entry.submerged = c;
-          };
-          if (ready(img)) grade();
-          else img.addEventListener("load", grade, { once: true });
-        }
-      }
-    }).catch(() => {
-    });
-  }
-  for (const name of ["bed", "shore", "moss"]) textures.set(name, asset("habitat/" + name + "-color.webp"));
-  var patterns = /* @__PURE__ */ new Map();
-  function terrainPattern(ctx2, name) {
-    if (patterns.has(name)) return patterns.get(name);
-    const img = textures.get(name);
-    if (!ready(img)) return;
-    const pattern = ctx2.createPattern(img, "repeat");
-    patterns.set(name, pattern);
-    return pattern;
-  }
-  function animalPlate(name) {
-    const model = fauna.get(name);
-    return model && ready(model.img) ? model : null;
-  }
-  function habitatPlate(name) {
-    const model = habitat.get(name);
-    return model && ready(model.img) ? model : null;
-  }
-  var deepBackground = asset("lagoon-depths.webp");
-  var forestBackground = asset("canopy-horizon.webp");
-  var isReady = ready;
-
   // src/physics.js
   function ground(x, z) {
     const bend = 32 + 14 * Math.sin(x * 0.029) + 5 * Math.sin(x * 0.071);
@@ -126,7 +61,7 @@
   }
   function levelFor(id, x, z, depth = 2.4, s = scaleOf(id)) {
     const bottom = ground(x, z), mode = modeOf(id);
-    if (mode === "air") return Math.max(0, bottom) + (id === "bird" ? Math.max(0.5, Math.min(8, depth)) : 1.2);
+    if (mode === "air") return Math.max(0, bottom) + (id === "bird" ? Math.max(0.5, Math.min(8, depth)) : id === "moth" ? Math.max(0.8, Math.min(5.2, depth)) : 1.2);
     if (mode === "water" || mode === "both" && bottom < -0.5) return Math.max(bottom + 0.08, Math.min(-s * 2 - 0.09, -depth - s * 0.7));
     return bottom + 0.018;
   }
@@ -197,19 +132,448 @@
     return true;
   }
 
+  // src/silk.js
+  var silkLength = (extended) => extended ? 15 : 11;
+  var separation = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+  var thorax = (a) => ({ x: a.x, y: a.y + bodySize(a) * 0.83, z: a.z });
+  function between(a, b, u) {
+    return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, z: a.z + (b.z - a.z) * u };
+  }
+  function silkPathClear(a, b, solids) {
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, horizontal = dx * dx + dz * dz;
+    for (const o of solids) {
+      if (Math.max(a.y, b.y) < o.base || Math.min(a.y, b.y) > o.top) continue;
+      let low = 0, high = 1;
+      if (Math.abs(dy) > 1e-4) {
+        const first = (o.base - a.y) / dy, last2 = (o.top - a.y) / dy;
+        low = Math.max(0, Math.min(first, last2));
+        high = Math.min(1, Math.max(first, last2));
+      }
+      const u = horizontal ? Math.min(high, Math.max(low, ((o.x - a.x) * dx + (o.z - a.z) * dz) / horizontal)) : low;
+      if (Math.hypot(a.x + dx * u - o.x, a.z + dz * u - o.z) < o.r + 0.018) return false;
+    }
+    const steps = Math.ceil(Math.sqrt(horizontal) / 0.55);
+    for (let i = 1; i < steps; i++) {
+      const p = between(a, b, i / steps);
+      if (p.y < ground(p.x, p.z) + 0.025) return false;
+    }
+    return true;
+  }
+  function aimSilk(hero2, items, solids, yaw, pitch, length) {
+    const start = thorax(hero2);
+    let best = null, score = Infinity;
+    for (const a of items) {
+      if (!a.live || a.type !== "moth") continue;
+      const end = thorax(a), dx = end.x - start.x, dz = end.z - start.z, dy = end.y - start.y, d = separation(start, end);
+      if (d > length) continue;
+      const horizontal = Math.hypot(dx, dz), delta = Math.atan2(dx, -dz) - yaw;
+      const azimuth = horizontal < 0.75 ? 0 : Math.abs(Math.atan2(Math.sin(delta), Math.cos(delta)));
+      const elevation = Math.abs(Math.atan2(dy, horizontal) + pitch);
+      if (azimuth > 0.87 || elevation > 1.49 && horizontal > 0.8) continue;
+      const rank = azimuth * 5 + elevation * 1.4 + d * 0.19;
+      if (rank < score && silkPathClear(start, end, solids)) {
+        best = a;
+        score = rank;
+      }
+    }
+    return best;
+  }
+  function castSilk(hero2, target, yaw, pitch, length, time) {
+    const start = thorax(hero2), incline = Math.max(-1.36, Math.min(1.36, -pitch));
+    const end = target ? thorax(target) : { x: start.x + Math.sin(yaw) * Math.cos(incline) * length, y: start.y + Math.sin(incline) * length, z: start.z - Math.cos(yaw) * Math.cos(incline) * length };
+    return { target, start, tip: { ...start }, end, t: time, since: time, phase: "flight", length, expires: time + 4.7 };
+  }
+  function stepSilk(web, hero2, solids, time, dt) {
+    if (!web) return null;
+    const origin = thorax(hero2), a = web.target;
+    function release() {
+      if (a) a.pinned = 0;
+      web.target = null;
+      web.phase = "miss";
+      web.since = time;
+      web.expires = time + 0.16;
+      return web;
+    }
+    if (web.phase === "miss") return time >= web.expires ? null : web;
+    if (a && (!a.live || separation(origin, thorax(a)) > web.length + 1.2)) return release();
+    if (web.phase === "flight") {
+      if (a) web.end = thorax(a);
+      const distance2 = separation(web.tip, web.end), tip = between(web.tip, web.end, Math.min(1, dt * 23 / Math.max(1e-3, distance2)));
+      if (!silkPathClear(web.tip, tip, solids) || !silkPathClear(origin, tip, solids)) return release();
+      web.tip = tip;
+      if (distance2 <= dt * 23 + 1e-3) {
+        if (!a) return release();
+        web.phase = "reel";
+        web.since = time;
+        a.pinned = 4;
+      }
+      return web;
+    }
+    const head = thorax(a);
+    if (time > web.expires || !silkPathClear(origin, head, solids)) return release();
+    if (web.phase === "reel") {
+      const reach = 0.89 * bodySize(hero2) + 0.4;
+      const hook = { x: hero2.x + reach * Math.sin(hero2.angle), z: hero2.z + reach * Math.cos(hero2.angle) };
+      hook.y = Math.max(ground(hook.x, hook.z) + 0.08, hero2.y + bodySize(hero2) * 0.39);
+      const dist = separation(a, hook), next = between(a, hook, Math.min(1, dt * 8.8 / Math.max(0.01, dist)));
+      if (blocked(next.x, next.z, next.y, bodySize(a) * 0.35, bodySize(a) * 0.9, solids)) return release();
+      a.x = next.x;
+      a.z = next.z;
+      a.y = Math.max(next.y, ground(a.x, a.z) + 0.06);
+      web.tip = thorax(a);
+      if (dist < 0.21) {
+        web.phase = "pinned";
+        web.since = time;
+        web.expires = time + 3.3;
+      }
+    } else {
+      web.tip = head;
+      if (separation(origin, head) > 2.4 * bodySize(hero2) + 0.6) return release();
+    }
+    a.pinned = 0.3;
+    return web;
+  }
+
+  // src/plates.js
+  var directory = "assets/";
+  var fauna = /* @__PURE__ */ new Map();
+  var habitat = /* @__PURE__ */ new Map();
+  var textures = /* @__PURE__ */ new Map();
+  var queued = /* @__PURE__ */ new Map();
+  function asset(file) {
+    if (queued.has(file)) return queued.get(file);
+    const img = new Image();
+    img.decoding = "async";
+    img.src = directory + file;
+    queued.set(file, img);
+    return img;
+  }
+  var ready = (img) => img && img.complete && img.naturalWidth > 0;
+  for (const [dir, map] of [["fauna", fauna], ["habitat", habitat]]) {
+    fetch(directory + dir + "/" + (dir === "fauna" ? "manifest" : "habitat") + ".json").then((r) => r.json()).then((data) => {
+      for (const [key, meta] of Object.entries(data)) {
+        const img = asset(dir + "/" + key + ".webp"), entry = { ...meta, img };
+        map.set(key, entry);
+        if (dir === "habitat") {
+          const grade = () => {
+            if (["rainwood", "youngtree", "fern", "tidegarden"].includes(key)) {
+              const shade = document.createElement("canvas");
+              shade.width = shade.height = 192;
+              const ink = shade.getContext("2d");
+              ink.drawImage(img, 0, 0, 192, 192);
+              ink.globalCompositeOperation = "source-in";
+              ink.fillStyle = "#19291c";
+              ink.fillRect(0, 0, 192, 192);
+              entry.shade = shade;
+            }
+            const c = document.createElement("canvas");
+            c.width = img.width;
+            c.height = img.height;
+            const g = c.getContext("2d");
+            g.drawImage(img, 0, 0);
+            g.globalCompositeOperation = "source-atop";
+            const tint = g.createLinearGradient(0, 0, 0, c.height);
+            tint.addColorStop(0, "rgba(13,63,52,.29)");
+            tint.addColorStop(0.53, "rgba(13,61,49,.44)");
+            tint.addColorStop(1, "rgba(6,43,41,.72)");
+            g.fillStyle = tint;
+            g.fillRect(0, 0, c.width, c.height);
+            entry.submerged = c;
+          };
+          if (ready(img)) grade();
+          else img.addEventListener("load", grade, { once: true });
+        }
+      }
+    }).catch(() => {
+    });
+  }
+  for (const name of ["bed", "shore", "moss"]) textures.set(name, asset("habitat/" + name + "-color.webp"));
+  var samples = /* @__PURE__ */ new Map();
+  function terrainSamples(name) {
+    if (samples.has(name)) return samples.get(name);
+    const img = textures.get(name);
+    if (!ready(img)) return null;
+    const levels = [], tile = document.createElement("canvas");
+    for (let size = 1024; size >= 16; size /= 2) {
+      tile.width = tile.height = size;
+      const c = tile.getContext("2d", { willReadFrequently: true });
+      c.drawImage(img, 0, 0, size, size);
+      const pixels2 = c.getImageData(0, 0, size, size);
+      levels.push({ size, colors: new Uint32Array(pixels2.data.buffer) });
+    }
+    samples.set(name, levels);
+    return levels;
+  }
+  function animalPlate(name) {
+    const model = fauna.get(name);
+    return model && ready(model.img) ? model : null;
+  }
+  function habitatPlate(name) {
+    const model = habitat.get(name);
+    return model && ready(model.img) ? model : null;
+  }
+
+  // src/ground-raster.js
+  var output = document.createElement("canvas");
+  var ctx = output.getContext("2d");
+  var rgba;
+  var zbuffer;
+  var lastKey = "";
+  var sizes = [0.29, 0.32, 0.35];
+  var textures2 = ["bed", "shore", "moss"];
+  var heights = /* @__PURE__ */ new Map();
+  function bed(x, z) {
+    const key = x + "," + z;
+    if (!heights.has(key)) {
+      if (heights.size > 22e3) heights.clear();
+      heights.set(key, ground(x, z));
+    }
+    return heights.get(key);
+  }
+  function smooth(n) {
+    n = Math.max(0, Math.min(1, n));
+    return n * n * (3 - 2 * n);
+  }
+  function mix(a, b, u) {
+    return a + (b - a) * u;
+  }
+  function sample(levels, u, v, level) {
+    const tile = levels[Math.min(level, levels.length - 1)];
+    const x = Math.floor(u * tile.size) & tile.size - 1, z = Math.floor(v * tile.size) & tile.size - 1;
+    return tile.colors[z * tile.size + x];
+  }
+  function selectMap(name, map, u, v, lod) {
+    if (map) return sample(map, u, v, lod);
+    return name === "bed" ? 6322543 : name === "shore" ? 8887211 : 5071445;
+  }
+  function drawGround(target, camera2, time, width2, height2, focal2, under) {
+    const w = Math.min(620, Math.max(300, Math.ceil(width2 * 0.62))), h = Math.round(w * height2 / width2);
+    const maps = ["bed", "shore", "moss"].map(terrainSamples), ready2 = maps.every(Boolean);
+    const signature = [w, h, ...[camera2.x, camera2.y, camera2.z, camera2.yaw, camera2.tilt].map((n) => Math.round(n * 160)), under, ready2, Math.floor(time * (under ? 3 : 1.5))].join("/");
+    if (lastKey === signature) {
+      target.drawImage(output, 0, 0, width2, height2);
+      return;
+    }
+    lastKey = signature;
+    if (output.width !== w || output.height !== h || !rgba) {
+      output.width = w;
+      output.height = h;
+      rgba = ctx.createImageData(w, h);
+      zbuffer = new Float32Array(w * h);
+    }
+    const out = rgba.data;
+    out.fill(0);
+    zbuffer.fill(Infinity);
+    const f = focal2 * w / width2, sy = Math.sin(camera2.yaw), cy = Math.cos(camera2.yaw), ct = Math.cos(camera2.tilt), st = Math.sin(camera2.tilt);
+    function vertex(x, z) {
+      const y = bed(x, z), ox = x - camera2.x, oz = camera2.z - z, dy = y - camera2.y, forward = oz * cy + ox * sy;
+      return { x, y, z, h: ox * cy - oz * sy, v: dy * ct + forward * st, d: forward * ct - dy * st };
+    }
+    function clip(a, b) {
+      const u = (0.14 - a.d) / (b.d - a.d);
+      return { x: mix(a.x, b.x, u), y: mix(a.y, b.y, u), z: mix(a.z, b.z, u), h: mix(a.h, b.h, u), v: mix(a.v, b.v, u), d: 0.14 };
+    }
+    function draw(a, b, c) {
+      const ax = w * 0.5 + f * a.h / a.d, ay = h * 0.49 - f * a.v / a.d, bx = w * 0.5 + f * b.h / b.d, by = h * 0.49 - f * b.v / b.d, cx = w * 0.5 + f * c.h / c.d, yy = h * 0.49 - f * c.v / c.d;
+      const left = Math.max(0, Math.floor(Math.min(ax, bx, cx))), right = Math.min(w - 1, Math.ceil(Math.max(ax, bx, cx)));
+      const top = Math.max(0, Math.floor(Math.min(ay, by, yy))), bottom = Math.min(h - 1, Math.ceil(Math.max(ay, by, yy)));
+      if (left > right || top > bottom) return;
+      const denom = (by - yy) * (ax - cx) + (cx - bx) * (ay - yy);
+      if (Math.abs(denom) < 1e-3) return;
+      const ux = (by - yy) / denom, uy = (cx - bx) / denom, vx = (yy - ay) / denom, vy = (ax - cx) / denom;
+      const az = 1 / a.d, bz = 1 / b.d, cz = 1 / c.d, darkAir = [143, 163, 150], wetFog = [19, 77, 78];
+      const slopeArea = (b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z);
+      const slopeX = slopeArea ? ((b.y - a.y) * (c.z - a.z) - (c.y - a.y) * (b.z - a.z)) / slopeArea : 0;
+      const slopeZ = slopeArea ? ((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / slopeArea : 0;
+      const sunlight = Math.max(0.42, Math.min(1.03, (0.82 + 0.46 * slopeX - 0.34 * slopeZ) / Math.sqrt(1 + slopeX * slopeX + slopeZ * slopeZ)));
+      for (let j = top; j <= bottom; j++) {
+        let u = (left + 0.5 - cx) * ux + (j + 0.5 - yy) * uy, v = (left + 0.5 - cx) * vx + (j + 0.5 - yy) * vy;
+        for (let i = left; i <= right; i++, u += ux, v += vx) {
+          const t = 1 - u - v;
+          if (u < -5e-5 || v < -5e-5 || t < -5e-5) continue;
+          const index = j * w + i, depth = 1 / (u * az + v * bz + t * cz);
+          if (depth >= zbuffer[index]) continue;
+          zbuffer[index] = depth;
+          const A = u * az * depth, B = v * bz * depth, C = t * cz * depth, x = A * a.x + B * b.x + C * c.x, y = A * a.y + B * b.y + C * c.y, z = A * a.z + B * b.z + C * c.z;
+          const elevation = y + 0.12 * Math.sin(x * 0.6) * Math.sin(z * 0.39);
+          const lo = elevation < -0.12 ? 0 : 1, hi = lo + 1, blend = lo === 0 ? smooth((elevation + 1.55) / 1.43) : smooth((elevation - 0.17) / 1.41);
+          const lod = depth < 3 ? 0 : depth < 7 ? 1 : depth < 14 ? 2 : depth < 29 ? 3 : depth < 58 ? 4 : 5;
+          const ca = selectMap(textures2[lo], maps[lo], x * sizes[lo], z * sizes[lo], lod), cb = selectMap(textures2[hi], maps[hi], x * sizes[hi], z * sizes[hi], lod);
+          const ripple = under ? Math.sin(x * 1.96 + 0.53 * Math.sin(z * 1.6 + time * 0.37) + time * 0.26) + Math.sin(z * 2.14 + 0.62 * Math.sin(x * 0.87 - time * 0.32)) : 2;
+          const light = (0.64 + 0.43 * sunlight) * (1 + 0.037 * Math.sin(x * 0.74 + z * 0.41)) + (under ? 0.13 * Math.pow(Math.max(0, 1 - Math.abs(ripple) * 1.7), 3) : 0);
+          let red = mix(ca & 255, cb & 255, blend) * light, green = mix(ca >> 8 & 255, cb >> 8 & 255, blend) * light, blue = mix(ca >> 16 & 255, cb >> 16 & 255, blend) * light;
+          const shoreWater = !under && camera2.y > 0 && y < 0, water = under || shoreWater;
+          if (water) {
+            const absorption = under ? Math.min(0.7, 0.14 + Math.max(0, -y) * 0.048) : Math.min(0.9, 0.32 - y * 0.12);
+            red = mix(red, 21, absorption);
+            green = mix(green, 114, absorption * 0.6);
+            blue = mix(blue, 113, absorption * 0.7);
+            if (shoreWater) {
+              const k2 = camera2.y / (camera2.y - y), sx = camera2.x + (x - camera2.x) * k2, sz = camera2.z + (z - camera2.z) * k2;
+              const shine = 0.5 + 0.5 * Math.sin(sx * 2.2 + sz * 0.46 + time * 0.6 + Math.sin(sz * 1.74 - time * 0.53));
+              const fr = 0.14 + 0.46 * Math.exp(-camera2.y * 2 / Math.max(1, depth));
+              red = mix(red, 113 + shine * 38, fr);
+              green = mix(green, 156 + shine * 52, fr);
+              blue = mix(blue, 150 + shine * 48, fr);
+            }
+          }
+          const fog = 1 - Math.exp(-depth * (under ? 0.03 : 0.014)), color = under ? wetFog : darkAir, k = index * 4;
+          out[k] = mix(red, color[0], fog);
+          out[k + 1] = mix(green, color[1], fog);
+          out[k + 2] = mix(blue, color[2], fog);
+          out[k + 3] = 255;
+        }
+      }
+    }
+    function face(a, b, c) {
+      if (a.d < 0.14 && b.d < 0.14 && c.d < 0.14) return;
+      if (a.d >= 0.14 && b.d >= 0.14 && c.d >= 0.14) {
+        draw(a, b, c);
+        return;
+      }
+      const verts = [], corners = [a, b, c];
+      for (let i = 0; i < 3; i++) {
+        const p = corners[i], q = corners[(i + 1) % 3];
+        if (p.d >= 0.14) verts.push(p);
+        if (p.d >= 0.14 !== q.d >= 0.14) verts.push(clip(p, q));
+      }
+      for (let i = 1; i < verts.length - 1; i++) draw(verts[0], verts[i], verts[i + 1]);
+    }
+    const tile = 3, radius = under ? 69 : 105, span = radius * 2 / tile, x0 = Math.floor(camera2.x / tile) * tile - radius, z0 = Math.floor(camera2.z / tile) * tile - radius;
+    let previous = Array.from({ length: span + 1 }, (_, i) => vertex(x0 + i * tile, z0));
+    for (let row = 1; row <= span; row++) {
+      const next = Array.from({ length: span + 1 }, (_, i) => vertex(x0 + i * tile, z0 + row * tile));
+      for (let i = 0; i < span; i++) {
+        face(previous[i], previous[i + 1], next[i]);
+        face(next[i], previous[i + 1], next[i + 1]);
+      }
+      previous = next;
+    }
+    ctx.putImageData(rgba, 0, 0);
+    target.drawImage(output, 0, 0, width2, height2);
+  }
+  function maskWithTerrain(ctx3, canvasW, canvasH, left, top, right, bottom, depth) {
+    if (!zbuffer || right < 0 || left > canvasW || top > canvasH || bottom < 0) return;
+    const scaleX = output.width / canvasW, scaleY = output.height / canvasH;
+    const from = Math.max(0, left), to = Math.min(canvasW, right), near = depth - Math.max(0.35, depth * 0.035);
+    const start = Math.max(0, Math.floor(top * scaleY)), end = Math.min(output.height - 1, Math.ceil(bottom * scaleY));
+    ctx3.beginPath();
+    ctx3.moveTo(from, top);
+    ctx3.lineTo(to, top);
+    for (let n = 9; n >= 0; n--) {
+      const sx = from + (to - from) * n / 9, x = Math.min(output.width - 1, Math.floor(sx * scaleX));
+      let sy = end;
+      for (let row = start; row <= end; row += 2) if (zbuffer[row * output.width + x] < near) {
+        sy = row;
+        break;
+      }
+      ctx3.lineTo(sx, Math.max(top, sy / scaleY + 1));
+    }
+    ctx3.closePath();
+    ctx3.clip();
+  }
+
+  // src/atmosphere.js
+  var sheet = document.createElement("canvas");
+  var context = sheet.getContext("2d");
+  var cached = null;
+  var pixels = null;
+  var clamp = (x) => Math.max(0, Math.min(1, x));
+  function smooth2(x) {
+    x = clamp(x);
+    return x * x * (3 - 2 * x);
+  }
+  function lagoonLight(ctx3, camera2, time, w, h, focal2) {
+    const key = [Math.round(time * 10), Math.round(camera2.x * 18), Math.round(camera2.z * 18), Math.round(camera2.y * 22), Math.round(camera2.yaw * 260), Math.round(camera2.tilt * 260), w, h].join("/");
+    if (key !== cached) {
+      cached = key;
+      const sw = Math.min(320, Math.ceil(w / 3.5)), sh = Math.ceil(sw * h / w);
+      if (sheet.width !== sw || sheet.height !== sh) {
+        sheet.width = sw;
+        sheet.height = sh;
+        pixels = context.createImageData(sw, sh);
+      }
+      if (!pixels) pixels = context.createImageData(sw, sh);
+      const rgba2 = pixels.data, s = Math.sin(camera2.yaw), c = Math.cos(camera2.yaw), ct = Math.cos(camera2.tilt), st = Math.sin(camera2.tilt);
+      const sin = Math.sin, cos = Math.cos;
+      for (let j = 0, k = 0; j < sh; j++) {
+        const v = (0.49 * h - (j + 0.5) * h / sh) / focal2, forward = ct + v * st, vertical = v * ct - st;
+        for (let i = 0; i < sw; i++, k += 4) {
+          const u = ((i + 0.5) * w / sw - w / 2) / focal2, inv = 1 / Math.sqrt(1 + u * u + v * v);
+          const dx = (u * c + forward * s) * inv, dz = (u * s - forward * c) * inv, dy = vertical * inv;
+          const sun = Math.max(0, -dx * 0.39 + dy * 0.61 - dz * 0.69);
+          const height2 = smooth2((dy + 0.46) * 1.15);
+          let red = 13 + height2 * 18, green = 66 + height2 * 44, blue = 70 + height2 * 37;
+          for (const length of [8.4, 19.6]) {
+            const y = Math.min(0, camera2.y + dy * length), x = camera2.x + dx * length + y * 0.52, z = camera2.z + dz * length + y * 0.76;
+            const beam = smooth2((sin(0.62 * x + 0.37 * z + sin(0.38 * z + time * 0.14) * 0.94 + sin(x * 0.26) * 0.5) - 0.56) * 2.2) * (0.53 + 0.47 * cos(0.16 * z + time * 0.1));
+            const L = beam * (0.42 + 0.58 * sun) * (0.68 + 0.32 * height2);
+            red += L * 18;
+            green += L * 22;
+            blue += L * 14;
+          }
+          if (dy > 0.018) {
+            const range = -camera2.y / dy, x = camera2.x + range * dx, z = camera2.z + range * dz;
+            const fade = (1 - smooth2((range - 16) / 68)) * smooth2((dy - 0.02) / 0.14);
+            const a = x * 0.91 + z * 1.24 + time * 0.83 + sin(z * 0.53 + time * 0.29) * 0.94;
+            const b = -x * 1.76 + z * 0.56 - time * 0.76 + sin(x * 0.45 + z * 0.38) * 0.78;
+            const m = cos(a) * 0.16 + cos(b) * 0.12, n = cos(a) * 0.19 - cos(b) * 0.16;
+            const incidence = clamp((dy + m * dx + n * dz) / Math.sqrt(1 + m * m + n * n)), window2 = smooth2((incidence - 0.58) / 0.24);
+            const folds = sin(a + sin(b) * 0.82) + 0.59 * sin(b + sin(a * 0.9));
+            const crease = smooth2(1 - Math.abs(folds) * 3.4), broad = 0.5 + 0.5 * folds / 1.6;
+            const swell = (19 * broad + crease * 32) * fade;
+            red += swell * 0.67 + window2 * 65 * fade;
+            green += swell + window2 * 72 * fade;
+            blue += swell * 0.82 + window2 * 56 * fade;
+            const gleam = Math.pow(Math.max(0, sun + 0.08 * m + 0.13 * n), 14) * fade;
+            red += gleam * 92;
+            green += gleam * 83;
+            blue += gleam * 48;
+          }
+          rgba2[k] = red;
+          rgba2[k + 1] = green;
+          rgba2[k + 2] = blue;
+          rgba2[k + 3] = 255;
+        }
+      }
+      context.putImageData(pixels, 0, 0);
+    }
+    ctx3.drawImage(sheet, 0, 0, w, h);
+  }
+
   // src/scenery.js
-  var heights = { rock: 1.25, coral: 1.95, kelp: 3.1, reed: 1.75, mushroom: 2.15, tree: 9, shell: 0.52, sponge: 1.68 };
+  var heights2 = { rock: 1.25, coral: 1.95, kelp: 3.1, reed: 1.75, mushroom: 0.68, tree: 9, shell: 0.52, sponge: 1.68, rainwood: 10.7, youngtree: 4.65, fern: 1.05, tidegarden: 3.85 };
   function propFor(p) {
+    if (p.kind) return p.kind;
     const h = ground(p.x, p.z);
     if (p.n === 7) return "shell";
     if (p.n === 8) return "sponge";
     if (p.n === 0) return "rock";
     if (Math.abs(h) < 0.9 && p.n > 1) return "reed";
     if (h < 0) return p.n < 4 ? "kelp" : "coral";
-    return p.n < 4 ? "mushroom" : "reed";
+    return p.n === 1 ? "mushroom" : "fern";
   }
   function propHeight(p, key) {
-    return heights[key] * p.s;
+    return heights2[key] * p.s;
+  }
+  var propYaw = (p) => p.angle ?? p.x * 3.71 + p.z;
+  var viewDistance = (key) => key === "rainwood" || key === "youngtree" ? 90 : key === "tidegarden" ? 65 : 48;
+  var reefLobes = [[-0.2, -0.1, 1.52, 1.75], [-2, -0.35, 1.13, 1], [2.18, 0.27, 0.88, 0.98], [0.58, -1.53, 0.65, 0.64], [-0.93, 1.12, 0.71, 0.62]];
+  function propColliders(p) {
+    const key = propFor(p), base = ground(p.x, p.z), height2 = propHeight(p, key), yaw = propYaw(p);
+    const solid = (x, z, r, lo, hi) => ({ x, z, r, base: base + lo, top: base + hi });
+    if (key === "rainwood" || key === "youngtree") {
+      const r = height2 * (key === "rainwood" ? 0.047 : 0.038);
+      return [solid(p.x, p.z, r * 1.43, 0, height2 * 0.13), solid(p.x, p.z, r, height2 * 0.13, height2 * 0.68)];
+    }
+    if (key === "tidegarden") {
+      const s = height2 / 4.079, c = Math.cos(yaw), a = Math.sin(yaw);
+      return reefLobes.map(([x, z, r, h]) => solid(p.x + (x * c + z * a) * s, p.z + (z * c - x * a) * s, r * s, 0, h * s));
+    }
+    if (key === "rock") return [solid(p.x, p.z, 0.96 * p.s, 0, height2), solid(p.x + 0.68 * p.s * Math.cos(yaw), p.z - 0.68 * p.s * Math.sin(yaw), 0.53 * p.s, 0, 0.71 * p.s)];
+    if (key === "shell" || key === "sponge" || key === "coral") return [solid(p.x, p.z, p.s * { shell: 0.7, sponge: 0.6, coral: 0.72 }[key], 0, height2 * 0.9)];
+    if (key === "mushroom") return [solid(p.x, p.z, 0.19 * height2, 0, height2), solid(p.x, p.z, 0.43 * height2, height2 * 0.66, height2)];
+    return [];
   }
   var nurseryBeds = [[-4, 34, 1.95], [4.4, 31, 2.1], [-3.8, 30.5, 1.6], [5.6, 27, 2.05], [-6, 25, 1.7], [3.3, 39.7, 1.9], [-5.5, 42, 1.8], [-2.9, 18, 1.35], [7.5, 18, 1.65]].map(([x, z, s]) => ({ x, z, s, n: 1 }));
   var falls = {
@@ -380,6 +744,107 @@
     }
   }
 
+  // src/silk-art.js
+  var tau = 2 * Math.PI;
+  var unit = (value) => Math.min(1, Math.max(0, value));
+  function projected(ctx3, project2, point, firstPerson) {
+    const p = project2(point.x, point.y, point.z);
+    const width2 = ctx3.canvas.clientWidth || ctx3.canvas.width;
+    const height2 = ctx3.canvas.clientHeight || ctx3.canvas.height;
+    const guard = Math.min(width2, height2) * 0.22;
+    if (!p || p.depth < (firstPerson ? 0.2 : 0.1) || !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < -guard || p.x > width2 + guard || p.y < -guard || p.y > height2 + guard) return null;
+    return p;
+  }
+  function stroke(ctx3, points2, color, width2) {
+    ctx3.beginPath();
+    let previous = null;
+    const limit = Math.max(ctx3.canvas.clientWidth || ctx3.canvas.width, ctx3.canvas.clientHeight || ctx3.canvas.height) * 0.49;
+    for (const point of points2) {
+      if (point) {
+        if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < limit) ctx3.lineTo(point.x, point.y);
+        else ctx3.moveTo(point.x, point.y);
+      }
+      previous = point;
+    }
+    ctx3.lineWidth = width2;
+    ctx3.strokeStyle = color;
+    ctx3.stroke();
+  }
+  function drawSilk(ctx3, project2, hero2, web, time, firstPerson) {
+    if (!web || hero2.form !== "spider" || time < web.t || time >= web.expires) return;
+    const caught = (web.phase === "pinned" || web.phase === "reel") && web.target?.live !== false && web.target;
+    const end = caught ? { x: caught.x, y: caught.y + bodySize(caught) * 0.8, z: caught.z } : web.tip || web.end;
+    if (!end || !web.start) return;
+    const size = bodySize(hero2), yaw = hero2.angle;
+    const start = {
+      x: hero2.x - Math.sin(yaw) * size * 0.91,
+      y: hero2.y + size * 0.48,
+      z: hero2.z - Math.cos(yaw) * size * 0.91
+    };
+    const age = Math.max(0, time - web.t);
+    const fly = web.phase === "flight", miss = web.phase === "miss";
+    const ex = end.x - start.x, ey = end.y - start.y, ez = end.z - start.z;
+    const horizontal = Math.hypot(ex, ez), length = Math.hypot(horizontal, ey);
+    if (length < 0.045) return;
+    const rx = horizontal > 0.01 ? ez / horizontal : Math.cos(yaw);
+    const rz = horizontal > 0.01 ? -ex / horizontal : -Math.sin(yaw);
+    const drag2 = size * (miss ? 0.68 : fly ? 0.19 : 0.085) + length * (miss ? 0.115 : 0.012);
+    const fade = miss ? unit((web.expires - time) / 0.2) : 1;
+    const segments = Math.max(26, Math.min(74, Math.ceil(length * 6)));
+    const primary = [], second = [];
+    const screen = (point) => projected(ctx3, project2, point, firstPerson);
+    for (let i = 0; i <= segments; i++) {
+      const u = i / segments, bow = Math.sin(Math.PI * u);
+      const pulse = Math.sin(10.5 * u - age * (fly ? 21 : 11));
+      const sway = size * bow * (fly ? 0.08 : miss ? 0.13 : 0.021) * pulse;
+      const p = {
+        x: start.x + ex * u + rx * sway,
+        y: start.y + ey * u - drag2 * bow,
+        z: start.z + ez * u + rz * sway
+      };
+      primary.push(screen(p));
+      const gap = size * bow * (0.038 + 0.023 * Math.sin(tau * u - age * 5));
+      second.push(screen({ x: p.x + rx * gap, y: p.y - gap * 0.38, z: p.z + rz * gap }));
+    }
+    ctx3.save();
+    ctx3.lineCap = "round";
+    ctx3.lineJoin = "round";
+    ctx3.globalAlpha *= fade;
+    stroke(ctx3, primary, "rgba(28,58,59,.57)", firstPerson ? 2.5 : 2.2);
+    stroke(ctx3, second, "rgba(186,224,220,.55)", 0.8);
+    stroke(ctx3, primary, "rgba(242,248,232,.95)", firstPerson ? 1.22 : 1.04);
+    const tip = screen(end);
+    if (caught) {
+      const radius = bodySize(caught) * 0.79;
+      const shape = (angle, f) => {
+        const flutter = 1 + 0.085 * Math.sin(angle * 3 + age * 4);
+        const across = radius * f * Math.cos(angle) * flutter;
+        const vertical = radius * f * Math.sin(angle) * 0.76;
+        const wrap = radius * (0.2 - 0.43 * f * f + 0.09 * f * Math.sin(2 * angle));
+        return screen({ x: end.x + across * rx + wrap * rz, y: end.y + vertical, z: end.z + across * rz - wrap * rx });
+      };
+      for (let n = 0; n < 7; n++) {
+        const a = n * tau / 7 + 0.19;
+        stroke(ctx3, [shape(a, 0), shape(a + 0.06, 0.53), shape(a, 1)], "rgba(226,241,231,.75)", 0.72);
+      }
+      for (const f of [0.5, 0.91]) {
+        const ring = [];
+        for (let k = 0; k <= 28; k++) {
+          const a = k * tau / 28 + 0.19;
+          ring.push(shape(a, f * (1 - 0.13 * Math.sin(k * Math.PI / 4) ** 2)));
+        }
+        stroke(ctx3, ring, "rgba(219,239,229,.8)", 0.83);
+      }
+    } else if (fly && tip) {
+      const r = Math.min(3, Math.max(0.9, (tip.k || 1) * size * 0.021));
+      ctx3.fillStyle = "rgba(248,255,232,.95)";
+      ctx3.beginPath();
+      ctx3.arc(tip.x, tip.y, r, 0, tau);
+      ctx3.fill();
+    }
+    ctx3.restore();
+  }
+
   // src/combat-art.js
   var curves = {
     silk: (u) => [Math.sin(u * 6.28) * 0.07, 0.82 + 0.24 * Math.sin(u * 3.14), 0.58 + u * 2.65],
@@ -397,14 +862,14 @@
     divide: (u) => [Math.cos(u * 4.2) * 0.87, 0.66 + Math.sin(u * 5) * 0.2, 0.4 + 1.28 * Math.sin(u * 2.65)]
   };
   var colors = { silk: "#c7f5e9", root: "#d1d788", vine: "#c1e395", hammer: "#e8bd88", sting: "#efcf79", stoop: "#d6ddd9", coil: "#cbbacc", engulf: "#c4edbd", divide: "#decbaa" };
-  function sweep(ctx2, project2, actor, shape, fraction, alpha, color, size, doubled = false) {
+  function sweep(ctx3, project2, actor, shape, fraction, alpha, color, size, doubled = false) {
     const start = Math.max(0, fraction - 0.59), sa = Math.sin(actor.angle), ca = Math.cos(actor.angle), curve = curves[shape];
     if (!curve || fraction <= start) return;
-    ctx2.strokeStyle = color;
-    ctx2.lineCap = "round";
-    ctx2.lineJoin = "round";
+    ctx3.strokeStyle = color;
+    ctx3.lineCap = "round";
+    ctx3.lineJoin = "round";
     for (const side of doubled ? [-1, 1] : [1]) {
-      ctx2.beginPath();
+      ctx3.beginPath();
       let n = 0, scale = 1;
       for (let k = 0; k <= 11; k++) {
         const u = start + (fraction - start) * k / 11, [raw, y, z] = curve(u), x = raw * side;
@@ -413,16 +878,16 @@
           n = 0;
           continue;
         }
-        if (n++) ctx2.lineTo(p.x, p.y);
-        else ctx2.moveTo(p.x, p.y);
+        if (n++) ctx3.lineTo(p.x, p.y);
+        else ctx3.moveTo(p.x, p.y);
         scale = p.k;
       }
-      ctx2.globalAlpha = alpha * 0.2;
-      ctx2.lineWidth = Math.max(2, Math.min(13, scale * size * 0.09));
-      ctx2.stroke();
-      ctx2.globalAlpha = alpha;
-      ctx2.lineWidth = Math.max(1, Math.min(4, scale * size * 0.032));
-      ctx2.stroke();
+      ctx3.globalAlpha = alpha * 0.2;
+      ctx3.lineWidth = Math.max(2, Math.min(13, scale * size * 0.09));
+      ctx3.stroke();
+      ctx3.globalAlpha = alpha;
+      ctx3.lineWidth = Math.max(1, Math.min(4, scale * size * 0.032));
+      ctx3.stroke();
     }
   }
   var debris = {
@@ -438,14 +903,14 @@
     hunter: ["#e4bcb0", "scale", 14],
     pike: ["#a2d1b4", "scale", 12]
   };
-  function drawCombat(ctx2, project2, game2, time) {
-    ctx2.save();
+  function drawCombat(ctx3, project2, game2, time) {
+    ctx3.save();
     const hero2 = game2.hero, swing = game2.swing;
     if (swing) {
       const u = (time - swing.t) / swing.duration, move = moves[hero2.form];
-      if (u > 0.24 && u < 1) {
+      if ((move !== "silk" || swing.webBite) && u > 0.24 && u < 1) {
         const v = (u - 0.24) / 0.76;
-        sweep(ctx2, project2, { ...hero2, angle: swing.angle }, move, v, Math.sin(Math.PI * v), colors[move] || "#e7dfb9", bodySize(hero2), ["engulf", "divide", "silk", "snap", "stoop"].includes(move));
+        sweep(ctx3, project2, { ...hero2, angle: swing.angle }, move, v, Math.sin(Math.PI * v), colors[move] || "#e7dfb9", bodySize(hero2), ["engulf", "divide", "silk", "snap", "stoop"].includes(move));
       }
     }
     for (const e of game2.enemies) {
@@ -454,24 +919,24 @@
       if (e.phase === "windup") {
         const u = Math.min(1, e.age / h.wind), p = project2(e.x, e.y + size * 2.35, e.z);
         if (p && p.depth > 0.17) {
-          ctx2.globalAlpha = 0.68 + 0.31 * u;
-          ctx2.lineCap = "round";
-          ctx2.lineWidth = 2;
-          ctx2.strokeStyle = "#ffbe89";
-          ctx2.beginPath();
-          ctx2.arc(p.x, p.y, 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * u);
-          ctx2.stroke();
-          ctx2.font = "600 12px system-ui";
-          ctx2.textAlign = "center";
-          ctx2.lineWidth = 3;
-          ctx2.strokeStyle = "#243330";
-          ctx2.strokeText(h.move, p.x, p.y - 11);
-          ctx2.fillStyle = "#ffe2b7";
-          ctx2.fillText(h.move, p.x, p.y - 11);
+          ctx3.globalAlpha = 0.68 + 0.31 * u;
+          ctx3.lineCap = "round";
+          ctx3.lineWidth = 2;
+          ctx3.strokeStyle = "#ffbe89";
+          ctx3.beginPath();
+          ctx3.arc(p.x, p.y, 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * u);
+          ctx3.stroke();
+          ctx3.font = "600 12px system-ui";
+          ctx3.textAlign = "center";
+          ctx3.lineWidth = 3;
+          ctx3.strokeStyle = "#243330";
+          ctx3.strokeText(h.move, p.x, p.y - 11);
+          ctx3.fillStyle = "#ffe2b7";
+          ctx3.fillText(h.move, p.x, p.y - 11);
         }
       } else if (e.phase === "strike") {
         const u = Math.min(1, e.age / h.strike), move = { ape: "hammer", pike: "sting", hunter: "snap", mite: "stoop", mantis: "snap" }[e.type];
-        sweep(ctx2, project2, e, move, u, 0.94 * Math.sin(Math.PI * u), "#ffc39e", size, e.type === "mantis");
+        sweep(ctx3, project2, e, move, u, 0.94 * Math.sin(Math.PI * u), "#ffc39e", size, e.type === "mantis");
       }
     }
     const hit = game2.impact;
@@ -479,28 +944,28 @@
       const f = (time - hit.t) / 0.59, p = project2(hit.x, hit.y, hit.z);
       if (p && f >= 0 && f < 1) {
         const [color, shape, count] = debris[hit.type] || debris.mite;
-        ctx2.fillStyle = ctx2.strokeStyle = color;
-        ctx2.lineWidth = 1.2;
-        ctx2.globalAlpha = 1 - f;
+        ctx3.fillStyle = ctx3.strokeStyle = color;
+        ctx3.lineWidth = 1.2;
+        ctx3.globalAlpha = 1 - f;
         for (let i = 0; i < (hit.killed ? count : 5); i++) {
           const a = i * 2.39996, d = (0.1 + f * (0.64 + i % 7 * 0.14)) * p.k * hit.size, x = p.x + d * Math.cos(a), y = p.y + d * Math.sin(a) * 0.72 + p.k * hit.size * (shape === "chip" ? 0.57 * f * f : -0.41 * f);
           const r = Math.max(0.65, Math.min(4, p.k * hit.size * (0.023 + 8e-3 * (i % 3)) * (1 - f * 0.66)));
-          ctx2.beginPath();
+          ctx3.beginPath();
           if (shape === "scale" || shape === "chip") {
-            ctx2.moveTo(x - r, y);
-            ctx2.lineTo(x + 0.3 * r, y - r * 1.8);
-            ctx2.lineTo(x + r * 1.4, y + r * 0.4);
-            ctx2.closePath();
-            ctx2.fill();
+            ctx3.moveTo(x - r, y);
+            ctx3.lineTo(x + 0.3 * r, y - r * 1.8);
+            ctx3.lineTo(x + r * 1.4, y + r * 0.4);
+            ctx3.closePath();
+            ctx3.fill();
           } else {
-            ctx2.arc(x, y, r, 0, Math.PI * 2);
-            if (shape === "bubble") ctx2.stroke();
-            else ctx2.fill();
+            ctx3.arc(x, y, r, 0, Math.PI * 2);
+            if (shape === "bubble") ctx3.stroke();
+            else ctx3.fill();
           }
         }
       }
     }
-    ctx2.restore();
+    ctx3.restore();
   }
 
   // src/renderer.js
@@ -512,11 +977,7 @@
   import("./gpu-engine.js").then((m) => {
     drawGPU = m.bootGPU(stage);
   }).catch((err) => console.warn("Using the painted renderer", err));
-  var ctx = canvas.getContext("2d");
-  var mainContext = ctx;
-  var floorCanvas = document.createElement("canvas");
-  var floorContext = floorCanvas.getContext("2d");
-  var floorKey = "";
+  var ctx2 = canvas.getContext("2d");
   var camera = { x: 0, y: 12, z: 20, tilt: 0.48 };
   var width;
   var height;
@@ -529,11 +990,7 @@
     const ratio = Math.min(devicePixelRatio, 1.5);
     canvas.width = width * ratio;
     canvas.height = height * ratio;
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    floorCanvas.width = canvas.width;
-    floorCanvas.height = canvas.height;
-    floorContext.setTransform(ratio, 0, 0, ratio, 0, 0);
-    floorKey = "";
+    ctx2.setTransform(ratio, 0, 0, ratio, 0, 0);
     focal = Math.min(height * 0.99, width * 1.12);
   }
   resize();
@@ -577,17 +1034,17 @@
         let diff = Math.hypot(xx - yy, 2 * xy), r = Math.sqrt((xx + yy + diff) / 2), q = Math.sqrt(Math.max(0.1, (xx + yy - diff) / 2));
         if (p.x + r < 0 || p.x - r > width || p.y + r < 0 || p.y - r > height) return;
         commands.push({ depth: p.depth, draw() {
-          ctx.beginPath();
-          ctx.ellipse(p.x, p.y, r, q, Math.atan2(2 * xy, xx - yy) / 2, 0, Math.PI * 2);
-          const light = ctx.createLinearGradient(p.x - r * 0.55, p.y - r * 0.6, p.x + r * 0.45, p.y + r * 0.6);
+          ctx2.beginPath();
+          ctx2.ellipse(p.x, p.y, r, q, Math.atan2(2 * xy, xx - yy) / 2, 0, Math.PI * 2);
+          const light = ctx2.createLinearGradient(p.x - r * 0.55, p.y - r * 0.6, p.x + r * 0.45, p.y + r * 0.6);
           light.addColorStop(0, color);
           light.addColorStop(0.55, color);
           light.addColorStop(1, shadow(color));
-          ctx.fillStyle = light;
-          ctx.fill();
-          ctx.strokeStyle = "#253f465b";
-          ctx.lineWidth = Math.min(2, Math.max(0.5, p.k * 0.045));
-          ctx.stroke();
+          ctx2.fillStyle = light;
+          ctx2.fill();
+          ctx2.strokeStyle = "#253f465b";
+          ctx2.lineWidth = Math.min(2, Math.max(0.5, p.k * 0.045));
+          ctx2.stroke();
         } });
       },
       limb(a, b, d, e, f, g, r, color, end = r * 0.68) {
@@ -595,215 +1052,43 @@
         if (!A || !B || Math.min(A.depth, B.depth) < Math.max(0.05, r * size * 1.5)) return;
         const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len, R = r * A.k * size, S = end * B.k * size;
         commands.push({ depth: (A.depth + B.depth) / 2, draw() {
-          ctx.beginPath();
-          ctx.moveTo(A.x + nx * R, A.y + ny * R);
-          ctx.lineTo(B.x + nx * S, B.y + ny * S);
-          ctx.lineTo(B.x - nx * S, B.y - ny * S);
-          ctx.lineTo(A.x - nx * R, A.y - ny * R);
-          ctx.closePath();
-          ctx.fillStyle = color;
-          ctx.fill();
-          ctx.strokeStyle = "#3344475c";
-          ctx.lineWidth = 1;
-          ctx.stroke();
+          ctx2.beginPath();
+          ctx2.moveTo(A.x + nx * R, A.y + ny * R);
+          ctx2.lineTo(B.x + nx * S, B.y + ny * S);
+          ctx2.lineTo(B.x - nx * S, B.y - ny * S);
+          ctx2.lineTo(A.x - nx * R, A.y - ny * R);
+          ctx2.closePath();
+          ctx2.fillStyle = color;
+          ctx2.fill();
+          ctx2.strokeStyle = "#3344475c";
+          ctx2.lineWidth = 1;
+          ctx2.stroke();
         } });
       }
     };
   }
   var props = [];
   function backdrop(time) {
-    const water = camera.y < 0 && ground(camera.x, camera.z) < 0;
-    if (water) {
-      const g = ctx.createLinearGradient(0, 0, 0, height);
-      g.addColorStop(0, "#72b3aa");
-      g.addColorStop(0.21, "#337f7c");
-      g.addColorStop(0.6, "#174e54");
-      g.addColorStop(1, "#0a353b");
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, width, height);
-      if (isReady(deepBackground)) {
-        const img = deepBackground, scale = Math.max(width / img.width, height / img.height) * 1.08, w = img.width * scale, h = img.height * scale;
-        const turn = camera.yaw / (Math.PI * 1.5) + camera.x * 18e-4;
-        const scroll = (turn % 2 + 2) % 2, shift = scroll * w, top = (height - h) * 0.54 + Math.min(0, camera.y + 2) * 2;
-        for (let i = -1; i < 4; i++) {
-          const x = i * w - shift;
-          if (x > width || x + w < 0) continue;
-          ctx.save();
-          ctx.translate(x + (i % 2 ? w : 0), top);
-          if (i % 2) ctx.scale(-1, 1);
-          ctx.drawImage(img, 0, 0, w, h);
-          ctx.restore();
-        }
-      }
+    const under = camera.y < 0 && ground(camera.x, camera.z) < 0;
+    if (under) {
+      lagoonLight(ctx2, camera, time, width, height, focal);
       return;
     }
-    if (isReady(forestBackground)) {
-      const im = forestBackground, sc = Math.max(width / im.width, height / im.height) * 1.1, w = im.width * sc, h = im.height * sc;
-      const shift = ((camera.yaw / (Math.PI * 1.5) + camera.x * 1e-3) % 2 + 2) % 2 * w;
-      for (let i = -1; i < 4; i++) {
-        const x = i * w - shift;
-        if (x > width || x + w < 0) continue;
-        ctx.save();
-        ctx.translate(x + (i % 2 ? w : 0), (height - h) * 0.28);
-        if (i % 2) ctx.scale(-1, 1);
-        ctx.drawImage(im, 0, 0, w, h);
-        ctx.restore();
-      }
-      return;
+    const sky = ctx2.createLinearGradient(0, 0, 0, height);
+    sky.addColorStop(0, "#5d879d");
+    sky.addColorStop(0.56, "#c3cdbb");
+    sky.addColorStop(1, "#98aaa0");
+    ctx2.fillStyle = sky;
+    ctx2.fillRect(0, 0, width, height);
+    const sun = project(camera.x - 43, camera.y + 76, camera.z + 32);
+    if (sun) {
+      const r = height * (under ? 0.44 : 0.24), light = ctx2.createRadialGradient(sun.x, sun.y, 1, sun.x, sun.y, r);
+      light.addColorStop(0, under ? "rgba(242,255,222,.68)" : "rgba(255,245,202,.9)");
+      light.addColorStop(0.2, "rgba(248,238,191,.24)");
+      light.addColorStop(1, "rgba(248,238,191,0)");
+      ctx2.fillStyle = light;
+      ctx2.fillRect(sun.x - r, sun.y - r, 2 * r, 2 * r);
     }
-    let grad = ctx.createLinearGradient(0, 0, 0, height);
-    grad.addColorStop(0, "#4b456f");
-    grad.addColorStop(0.4, "#d99790");
-    grad.addColorStop(0.64, "#f5cc93");
-    grad.addColorStop(1, "#74897e");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = "#ffe7a8";
-    ctx.beginPath();
-    ctx.arc(width * 0.76, height * 0.17, height * 0.076, 0, Math.PI * 2);
-    ctx.fill();
-    for (let layer = 0; layer < 3; layer++) {
-      ctx.fillStyle = ["#94859a", "#688797", "#476c77"][layer];
-      ctx.beginPath();
-      ctx.moveTo(0, height);
-      for (let i = 0; i <= 90; i++) {
-        let x = width * i / 90, a = i * 0.21 + layer * 2 + camera.x * 8e-3;
-        ctx.lineTo(x, height * (0.29 + layer * 0.052 + 0.045 * Math.sin(a) + 0.027 * Math.sin(a * 2.6)));
-      }
-      ctx.lineTo(width, height);
-      ctx.fill();
-    }
-  }
-  function eyeDepth(v) {
-    const dx = v[0] - camera.x, dz = camera.z - v[2], forward = dz * Math.cos(camera.yaw) + dx * Math.sin(camera.yaw);
-    return forward * Math.cos(camera.tilt) - (v[1] - camera.y) * Math.sin(camera.tilt);
-  }
-  function clipPoly(poly, measure) {
-    const result = [];
-    for (let i = 0; i < poly.length; i++) {
-      const a = poly[i], b = poly[(i + 1) % poly.length], ha = measure(a), hb = measure(b);
-      if (ha >= 0) result.push(a);
-      if (ha < 0 !== hb < 0) {
-        const u = ha / (ha - hb);
-        result.push(a.map((v, k) => v + (b[k] - v) * u));
-      }
-    }
-    return result;
-  }
-  var meshCache = /* @__PURE__ */ new Map();
-  function sample(x, z) {
-    const k = x + "," + z;
-    if (!meshCache.has(k)) {
-      if (meshCache.size > 14e3) meshCache.clear();
-      meshCache.set(k, ground(x, z));
-    }
-    return meshCache.get(k);
-  }
-  function polygon(points2, color, material, depth) {
-    const v = clipPoly(points2, (p) => eyeDepth(p) - 0.16);
-    if (v.length < 3) return;
-    const screen = v.map((p) => project(...p));
-    if (screen.some((p) => !p)) return;
-    if (screen.every((p) => p.x < 0) || screen.every((p) => p.x > width) || screen.every((p) => p.y < 0) || screen.every((p) => p.y > height)) return;
-    const pattern = material && terrainPattern(ctx, material);
-    function path(pts) {
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.closePath();
-    }
-    return function() {
-      const fade = material && submergedView ? Math.max(0, Math.min(1, (40 - depth) / 18)) : 1;
-      if (fade <= 0) return;
-      ctx.globalAlpha = fade;
-      path(screen);
-      ctx.fillStyle = color;
-      ctx.fill();
-      if (pattern && depth < (submergedView ? 39 : 70)) {
-        const density = material === "moss" ? 122 : 112;
-        for (let i = 1; i < screen.length - 1; i++) {
-          const a = v[0], b = v[i], c = v[i + 1], A = screen[0], B = screen[i], C = screen[i + 1];
-          const u = (b[0] - a[0]) * density, vv = (b[2] - a[2]) * density, w = (c[0] - a[0]) * density, h = (c[2] - a[2]) * density, det = u * h - w * vv;
-          if (Math.abs(det) < 1e-3) continue;
-          const x1 = B.x - A.x, x2 = C.x - A.x, y1 = B.y - A.y, y2 = C.y - A.y;
-          const aa = (x1 * h - x2 * vv) / det, bb = (y1 * h - y2 * vv) / det, cc = (u * x2 - w * x1) / det, dd = (u * y2 - w * y1) / det;
-          pattern.setTransform(new DOMMatrix([aa, bb, cc, dd, A.x - (aa * a[0] + cc * a[2]) * density, A.y - (bb * a[0] + dd * a[2]) * density]));
-          path([A, B, C]);
-          ctx.fillStyle = pattern;
-          ctx.fill();
-        }
-        if (submergedView) {
-          path(screen);
-          ctx.fillStyle = "rgba(11,70,72," + Math.min(0.82, 0.35 + Math.max(0, depth) / 76) + ")";
-          ctx.fill();
-        } else if (depth > 18) {
-          path(screen);
-          ctx.fillStyle = "rgba(119,143,136," + Math.min(0.65, (depth - 18) / 110) + ")";
-          ctx.fill();
-        }
-      }
-      ctx.globalAlpha = 1;
-    };
-  }
-  function terrain(t) {
-    const cache = [camera.x, camera.y, camera.z, camera.yaw, camera.tilt].map((v) => Math.round(v * 250)).join("/") + (terrainPattern(mainContext, "bed") ? "r" : "");
-    if (submergedView) {
-      if (floorKey === cache) {
-        mainContext.drawImage(floorCanvas, 0, 0, width, height);
-        return;
-      }
-      floorKey = cache;
-      ctx = floorContext;
-      ctx.clearRect(0, 0, width, height);
-    } else floorKey = "";
-    const tile = 3, radius = submergedView ? 39 : 54, ox = Math.floor(camera.x / tile) * tile, oz = Math.floor(camera.z / tile) * tile;
-    const floor = [], surface = [];
-    for (let z = oz - radius; z < oz + radius; z += tile) for (let x = ox - radius; x < ox + radius; x += tile) {
-      const mid = eyeDepth([x + tile / 2, 0, z + tile / 2]);
-      if (mid < -7) continue;
-      const heights2 = [[x, sample(x, z), z], [x + tile, sample(x + tile, z), z], [x + tile, sample(x + tile, z + tile), z + tile], [x, sample(x, z + tile), z + tile]];
-      if (submergedView && heights2.every((p) => p[1] > -0.47)) continue;
-      const depth = eyeDepth([x + tile / 2, heights2.reduce((v, p) => v + p[1], 0) / 4, z + tile / 2]);
-      for (const [low, high, shade, map] of [[-100, -0.55, "#426f68", "bed"], [-0.55, 0.82, "#bfa87e", "shore"], [0.82, 100, "#6e7951", "moss"]]) {
-        const part = clipPoly(clipPoly(heights2, (p) => p[1] - low), (p) => high - p[1]), draw = polygon(part, shade, map, depth);
-        if (draw) floor.push({ depth, draw });
-      }
-      if (!submergedView && heights2.some((p) => p[1] < 0)) {
-        const wet = clipPoly(heights2, (p) => -p[1]).map((p) => [p[0], 0, p[2]]);
-        const deep = heights2.reduce((v, p) => v + p[1], 0) / 4;
-        const draw = polygon(wet, deep < -1.6 ? "rgba(38,106,108,.91)" : "rgba(76,139,131,.65)");
-        if (draw) surface.push({ depth: mid, draw });
-        if (deep < -0.45) {
-          const wave = project(x + 1.3 + 0.18 * Math.sin(t * 0.58 + z), 0.02, z + 1.2), side = project(x + 1.74, 0.03, z + 1.18);
-          if (wave && side && wave.x > 0 && wave.x < width && wave.y > 0 && wave.y < height) surface.push({ depth: mid - 0.04, draw() {
-            ctx.strokeStyle = "rgba(218,225,192," + (0.19 + 0.1 * Math.sin(x * 3.2 + z + t * 0.7)) + ")";
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(wave.x, wave.y);
-            ctx.lineTo(side.x, side.y);
-            ctx.stroke();
-          } });
-        }
-      }
-    }
-    floor.sort((a, b) => b.depth - a.depth);
-    for (const p of floor) p.draw();
-    if (submergedView) {
-      const blend = ctx.createLinearGradient(0, 0, 0, height);
-      blend.addColorStop(0, "rgba(0,0,0,0)");
-      blend.addColorStop(0.34, "rgba(0,0,0,0)");
-      blend.addColorStop(0.53, "rgba(0,0,0,.06)");
-      blend.addColorStop(0.72, "rgba(0,0,0,.40)");
-      blend.addColorStop(0.88, "rgba(0,0,0,.82)");
-      blend.addColorStop(1, "#000");
-      ctx.globalCompositeOperation = "destination-in";
-      ctx.fillStyle = blend;
-      ctx.fillRect(0, 0, width, height);
-      ctx.globalCompositeOperation = "source-over";
-      ctx = mainContext;
-      ctx.drawImage(floorCanvas, 0, 0, width, height);
-    }
-    commands.push(...surface);
   }
   function contact(x, y, z, size, strength) {
     const p = project(x, y + 0.045, z);
@@ -812,16 +1097,52 @@
     if (r < 2 || r > width * 1.3 || p.y > height + r || p.x + r < 0 || p.x - r > width) return;
     commands.push({ depth: p.depth + 0.13, draw() {
       const h = Math.max(1, r * 0.19);
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.scale(r, h);
-      const ink = ctx.createRadialGradient(0, 0, 0.01, 0, 0, 1);
+      ctx2.save();
+      ctx2.translate(p.x, p.y);
+      ctx2.scale(r, h);
+      const ink = ctx2.createRadialGradient(0, 0, 0.01, 0, 0, 1);
       ink.addColorStop(0, "rgba(12,22,18," + strength + ")");
       ink.addColorStop(1, "rgba(12,22,18,0)");
-      ctx.fillStyle = ink;
-      ctx.fillRect(-1, -1, 2, 2);
-      ctx.restore();
+      ctx2.fillStyle = ink;
+      ctx2.fillRect(-1, -1, 2, 2);
+      ctx2.restore();
     } });
+  }
+  function plantShadow(p) {
+    const name = propFor(p), m = habitatPlate(name);
+    if (!m?.shade || !(name === "rainwood" || name === "youngtree" || name === "fern" || name === "tidegarden")) return;
+    const d = Math.hypot(p.x - camera.x, p.z - camera.z);
+    if (d > 33) return;
+    const span = propHeight(p, name) * m.size / m.height;
+    const point = (u, v) => {
+      const across = (u - m.anchor[0]) * span, high = (m.anchor[1] - v) * span;
+      const x = p.x + across * 0.62 + high * 0.56, z = p.z + across * 0.78 - high * 0.44;
+      return project(x, ground(x, z) + 0.028, z);
+    };
+    const A = point(0, 0), B = point(1, 0), C = point(0, 1), D = point(1, 1);
+    if (!A || !B || !C || !D || [A, B, C, D].every((v) => v.y < 0 || v.y > height + 160)) return;
+    ctx2.save();
+    ctx2.globalAlpha = (submergedView ? 0.15 : 0.34) * Math.min(1, (33 - d) / 12);
+    const im = m.shade;
+    function tri(a, b, c, flip) {
+      ctx2.save();
+      ctx2.beginPath();
+      ctx2.moveTo(a.x, a.y);
+      ctx2.lineTo(b.x, b.y);
+      ctx2.lineTo(c.x, c.y);
+      ctx2.closePath();
+      ctx2.clip();
+      ctx2.transform((b.x - a.x) / im.width, (b.y - a.y) / im.width, (c.x - a.x) / im.height, (c.y - a.y) / im.height, a.x, a.y);
+      if (flip) {
+        ctx2.translate(im.width, im.height);
+        ctx2.scale(-1, -1);
+      }
+      ctx2.drawImage(im, 0, 0);
+      ctx2.restore();
+    }
+    tri(A, B, C, false);
+    tri(D, C, B, true);
+    ctx2.restore();
   }
   function plant(name, x, y, z, h, phase, t) {
     const m = habitatPlate(name);
@@ -829,22 +1150,22 @@
     const scale = h / m.height, center = project(x, y + h * 0.46, z), anchor = project(x, y, z);
     if (!center || !anchor || center.depth < 0.35) return;
     const distance2 = Math.hypot(x - camera.x, z - camera.z);
-    if (submergedView && (distance2 > 38 || y > 0.1 && distance2 > 11)) return;
+    if (submergedView && distance2 > (y > 0.1 ? 35 : 47)) return;
     const size = center.k * m.size * scale;
     const atX = anchor.x, atY = anchor.y, left = -size * m.anchor[0], top = -size * m.anchor[1];
     if (size < 2 || atX + left > width || atX + left + size < 0 || atY + top > height || atY + top + size < 0) return;
-    const baseBlend = Math.max(0, Math.min(1, (atY / height - 0.48) / 0.42));
-    const alpha = submergedView ? Math.min(1, Math.max(0, (39 - distance2) / 19)) * baseBlend * baseBlend : Math.min(1, Math.max(0.15, (91 - distance2) / 38));
+    const alpha = submergedView ? Math.min(1, Math.max(0, (47 - distance2) / 26)) : Math.min(1, Math.max(0.18, (93 - distance2) / 36));
     if (alpha < 0.025) return;
     if (distance2 < 19) contact(x, y, z, h * (name === "rock" ? 1 : 0.32), 0.4);
     commands.push({ depth: center.depth, draw() {
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      ctx.translate(atX, atY);
-      ctx.scale(Math.sin(phase) < 0 ? -1 : 1, 1);
-      if (name === "kelp" || name === "reed") ctx.transform(1, 0, 0.028 * Math.sin(t * 0.9 + phase), 1, 0, 0);
-      ctx.drawImage(submergedView && m.submerged ? m.submerged : m.img, left, top, size, size);
-      ctx.restore();
+      ctx2.save();
+      if (distance2 > 12) maskWithTerrain(ctx2, width, height, atX + left, atY + top, atX + left + size, atY + top + size, center.depth);
+      ctx2.globalAlpha = alpha;
+      ctx2.translate(atX, atY);
+      ctx2.scale(Math.sin(phase) < 0 ? -1 : 1, 1);
+      if (name === "kelp" || name === "reed" || name === "fern") ctx2.transform(1, 0, 0.028 * Math.sin(t * 0.9 + phase), 1, 0, 0);
+      ctx2.drawImage(submergedView && m.submerged ? m.submerged : m.img, left, top, size, size);
+      ctx2.restore();
     } });
   }
   function animal(name, x, y, z, scale, angle, t, hit = 0, hero2 = false, pose = {}) {
@@ -859,36 +1180,30 @@
     if (altitude < 4.5) contact(x, ground(x, z), z, scale * (1.3 + altitude * 0.07), Math.max(0.07, 0.38 - altitude * 0.06));
     const alpha = submergedView ? Math.max(0.15, Math.min(1, (39 - pos.depth) / 23)) : Math.max(0.3, Math.min(1, (65 - pos.depth) / 25));
     commands.push({ depth: pos.depth, draw() {
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      ctx.translate(pos.x, pos.y);
-      ctx.rotate((pose.roll || 0) + 0.38 * (pose.pitch || 0) * Math.cos(angle - camera.yaw));
+      ctx2.save();
+      ctx2.globalAlpha = alpha;
+      ctx2.translate(pos.x, pos.y);
+      ctx2.rotate((pose.roll || 0) + 0.38 * (pose.pitch || 0) * Math.cos(angle - camera.yaw));
       const breath = name === "canopy-heart" ? 0 : Math.sin(t * (name === "bee" ? 10 : 3.8)) * 0.019;
-      ctx.scale((1 + breath) * (pose.wide || 1) * Math.sqrt(pose.stretch || 1), (1 - breath * 0.65) / Math.sqrt(pose.stretch || 1));
+      ctx2.scale((1 + breath) * (pose.wide || 1) * Math.sqrt(pose.stretch || 1), (1 - breath * 0.65) / Math.sqrt(pose.stretch || 1));
       if (hit > 0) {
-        ctx.shadowColor = "#ffe0a4";
-        ctx.shadowBlur = 7;
+        ctx2.shadowColor = "#ffe0a4";
+        ctx2.shadowBlur = 7;
       }
-      ctx.drawImage(m.img, view % 4 * m.tile, Math.floor(view / 4) * m.tile, m.tile, m.tile, -size / 2, -size / 2, size, size);
-      ctx.restore();
+      ctx2.drawImage(m.img, view % 4 * m.tile, Math.floor(view / 4) * m.tile, m.tile, m.tile, -size / 2, -size / 2, size, size);
+      ctx2.restore();
     } });
   }
   function habitat2(time, fallen, landmarks) {
     for (const item of [...props, ...nurseryBeds]) {
       const dist = Math.hypot(item.x - camera.x, item.z - camera.z);
-      if (dist > (submergedView ? 38 : 67) || dist < 0.42) continue;
       const key = propFor(item);
-      plant(key, item.x, ground(item.x, item.z), item.z, propHeight(item, key), item.x * 5.1 + item.z, time);
+      if (dist > viewDistance(key) || dist < 0.42) continue;
+      plant(key, item.x, ground(item.x, item.z), item.z, propHeight(item, key), propYaw(item), time);
     }
     for (const mark of landmarks) {
       const h = ground(mark.x, mark.z);
-      if (Math.hypot(mark.x - camera.x, mark.z - camera.z) < 70) plant(h < 0 ? "coral" : "tree", mark.x, h, mark.z, 7.2, mark.z, time);
-    }
-    if (!submergedView) {
-      for (let i = 0; i < 32; i++) {
-        const x = -145 + i * 9, z = -107 + Math.sin(i * 0.7) * 8;
-        if (Math.hypot(x - camera.x, z - camera.z) < 88) plant("tree", x, ground(x, z), z, 13 + i % 3, i, time);
-      }
+      if (Math.hypot(mark.x - camera.x, mark.z - camera.z) < 70) plant(h < 0 ? "coral" : "rainwood", mark.x, h, mark.z, h < 0 ? 7.2 : 12.84, mark.z, time);
     }
     const web = worldModel(-17, ground(-17, 2), 2);
     for (let i = 0; i < 8; i++) {
@@ -913,7 +1228,7 @@
     props = game2.world.props;
     const yaw = game2.yaw || 0;
     const playerSize = bodySize(hero2);
-    const behind = game2.firstPerson ? 0 : 7.2 * Math.sqrt(playerSize);
+    const behind = game2.firstPerson ? 0 : 7.2 * Math.sqrt(playerSize) * (game2.zoom || 1);
     const submerged = hero2.y + playerSize * 0.8 < 0 && ground(hero2.x, hero2.z) < 0;
     let cameraHeight = hero2.y + playerSize * (game2.firstPerson ? 1.05 : 4.05) + Math.sin(game2.pitch) * behind * 0.78;
     if (submerged) cameraHeight = Math.min(-0.13, cameraHeight);
@@ -937,8 +1252,8 @@
       }
     }
     camera.yaw = intro ? 0 : yaw;
-    const smooth = game2.snap ? 1 : Math.min(1, dt * 10);
-    for (const k of Object.keys(target)) camera[k] += (target[k] - camera[k]) * smooth;
+    const smooth3 = game2.snap ? 1 : Math.min(1, dt * 10);
+    for (const k of Object.keys(target)) camera[k] += (target[k] - camera[k]) * smooth3;
     game2.snap = false;
     submergedView = camera.y < 0;
     let accelerated = false;
@@ -950,10 +1265,11 @@
         drawGPU = null;
       }
     }
-    if (accelerated) ctx.clearRect(0, 0, width, height);
+    if (accelerated) ctx2.clearRect(0, 0, width, height);
     else {
       backdrop(time);
-      terrain(time);
+      drawGround(ctx2, camera, time, width, height, focal, submergedView);
+      for (const p of props) plantShadow(p);
       habitat2(time, game2.fallen, game2.world.landmarks);
       for (const a of game2.items) if (a.live && Math.hypot(a.x - camera.x, a.z - camera.z) < 42) animal(a.type, a.x, a.y, a.z, scaleOf(a.type), a.angle, time + a.seed, a.hit);
       for (const e of game2.enemies) if (e.live && Math.hypot(e.x - camera.x, e.z - camera.z) < 48) animal(e.type, e.x, e.y, e.z, scaleOf(e.type), e.angle, time, e.hit, false, predatorPose(e));
@@ -967,10 +1283,10 @@
         for (let j = 0; j < 62; j++) {
           const px = ((j * 0.6180339 * width + Math.sin(time * 0.24 + j) * 9 - camera.yaw * (14 + j % 17)) % width + width) % width;
           const py = ((j * 83 - time * (2 + j % 5)) % height + height) % height;
-          ctx.fillStyle = j % 4 ? "rgba(209,231,196,.33)" : "rgba(229,225,182,.62)";
-          ctx.beginPath();
-          ctx.arc(px, py, 0.55 + j % 3 * 0.35, 0, 6.29);
-          ctx.fill();
+          ctx2.fillStyle = j % 4 ? "rgba(209,231,196,.33)" : "rgba(229,225,182,.62)";
+          ctx2.beginPath();
+          ctx2.arc(px, py, 0.55 + j % 3 * 0.35, 0, 6.29);
+          ctx2.fill();
         }
       }
     }
@@ -980,38 +1296,39 @@
         const p = project(guide.x, guide.y + bodySize(guide) * 1.65, guide.z);
         if (p && p.depth < 38 && p.x > 24 && p.x < width - 24 && p.y > 32 && p.y < height - 32) {
           const y = p.y - 5;
-          ctx.save();
-          ctx.translate(p.x, y);
-          ctx.beginPath();
-          ctx.moveTo(-4, -5);
-          ctx.lineTo(0, 0);
-          ctx.lineTo(4, -5);
-          ctx.lineJoin = "round";
-          ctx.lineCap = "round";
-          ctx.lineWidth = 4;
-          ctx.strokeStyle = "#19312d";
-          ctx.stroke();
-          ctx.lineWidth = 2;
-          ctx.strokeStyle = "#ffe2a1";
-          ctx.stroke();
-          ctx.restore();
+          ctx2.save();
+          ctx2.translate(p.x, y);
+          ctx2.beginPath();
+          ctx2.moveTo(-4, -5);
+          ctx2.lineTo(0, 0);
+          ctx2.lineTo(4, -5);
+          ctx2.lineJoin = "round";
+          ctx2.lineCap = "round";
+          ctx2.lineWidth = 4;
+          ctx2.strokeStyle = "#19312d";
+          ctx2.stroke();
+          ctx2.lineWidth = 2;
+          ctx2.strokeStyle = "#ffe2a1";
+          ctx2.stroke();
+          ctx2.restore();
         }
       }
       if (game2.firstPerson) {
-        ctx.beginPath();
-        ctx.arc(width / 2, height * 0.5, 3, 0, Math.PI * 2);
-        ctx.fillStyle = "#f2f3c6";
-        ctx.fill();
+        ctx2.beginPath();
+        ctx2.arc(width / 2, height * 0.5, 3, 0, Math.PI * 2);
+        ctx2.fillStyle = "#f2f3c6";
+        ctx2.fill();
       }
-      drawCombat(ctx, project, game2, time);
+      drawCombat(ctx2, project, game2, time);
+      if (game2.web) drawSilk(ctx2, project, hero2, game2.web, time, game2.firstPerson);
       for (const a of [...game2.items, ...game2.enemies]) {
         if (!a.live || a.hp === a.maxHP) continue;
         const pt = project(a.x, a.y + scaleOf(a.type) * 2.1, a.z);
         if (pt) {
-          ctx.fillStyle = "#253d43";
-          ctx.fillRect(pt.x - 13, pt.y, 26, 4);
-          ctx.fillStyle = "#ffc690";
-          ctx.fillRect(pt.x - 13, pt.y, 26 * a.hp / a.maxHP, 4);
+          ctx2.fillStyle = "#253d43";
+          ctx2.fillRect(pt.x - 13, pt.y, 26, 4);
+          ctx2.fillStyle = "#ffc690";
+          ctx2.fillRect(pt.x - 13, pt.y, 26 * a.hp / a.maxHP, 4);
         }
       }
     }
@@ -1031,7 +1348,7 @@
     colony: { name: "Cell colony", prey: "microbe", quota: 12, action: "Engulf", next: ["fish"] },
     fish: { name: "Glassfin", prey: "minnow", quota: 14, action: "Bite", next: ["lungfish"] },
     lungfish: { name: "Lungfish", prey: "minnow", quota: 14, action: "Snap", next: ["spider", "bee"] },
-    spider: { name: "Silk hunter", prey: "moth", quota: 10, action: "Web strike", next: ["bird"] },
+    spider: { name: "Silk hunter", prey: "moth", quota: 10, action: "Cast web", next: ["bird"] },
     bird: { name: "Canopy bird", prey: "moth", quota: 12, action: "Swoop", next: ["ape"] },
     ape: { name: "Toolmaker", prey: "mite", quota: 12, action: "Strike", next: ["bee"] },
     bee: { name: "Pollinator", prey: "mite", quota: 10, action: "Sting", next: ["cleaner", "sapling"] },
@@ -1081,7 +1398,7 @@
   }
   function makeWorld(consumed = []) {
     const cache = /* @__PURE__ */ new Map(), removed = new Set(consumed);
-    let lastKey = "";
+    let lastKey2 = "";
     const world2 = { props: [], items: [], enemies: [], landmarks: [], solids: [] };
     function build(x, z, type) {
       const props2 = [], items = [], enemies = [], landmarks = [], solids = [];
@@ -1090,9 +1407,41 @@
         const px = (x + hash(x, z, 410 + j * 3)) * SIZE, pz = (z + hash(x, z, 411 + j * 3)) * SIZE;
         if (ground(px, pz) < -1.35) props2.push({ x: px, z: pz, s: 0.65 + hash(x, z, 412 + j * 3) * 0.85, n: j % 3 ? 7 : 8 });
       }
+      function plant2(kind, px, pz, s, angle) {
+        props2.push({ kind, x: px, z: pz, s, angle });
+      }
+      for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
+        const gx = x * 3 + col, gz = z * 3 + row;
+        const px = (gx + 0.12 + 0.76 * hash(gx, gz, 503)) * SIZE / 3, pz = (gz + 0.12 + 0.76 * hash(gx, gz, 504)) * SIZE / 3;
+        const bed2 = ground(px, pz), variation = hash(gx, gz, 505), angle = hash(gx, gz, 506) * Math.PI * 2;
+        if (bed2 > 1.1 && variation > 0.14 && !(Math.abs(px) < 11 && pz > -13 && pz < 5)) {
+          plant2(variation > 0.41 ? "rainwood" : "youngtree", px, pz, 0.66 + 0.7 * hash(gx, gz, 507), angle);
+          for (let j = 0; j < 3; j++) {
+            const a = angle + j * 2.4, offset = 2.4 + 2.5 * hash(gx, gz, 510 + j), fx = px + Math.cos(a) * offset, fz = pz + Math.sin(a) * offset;
+            if (ground(fx, fz) > 0.35) plant2("fern", fx, fz, 0.55 + 0.82 * hash(gx, gz, 515 + j), a);
+          }
+        } else if (bed2 < -4.7 && variation > 0.77 && Math.hypot(px, pz - 32) > 18) plant2("tidegarden", px, pz, 0.67 + 0.44 * hash(gx, gz, 521), angle);
+      }
+      const grove = [
+        ["rainwood", -0.6, -8.4, 1.09, 0.42],
+        ["rainwood", 12.1, -13.2, 1.19, 2.2],
+        ["rainwood", -12.6, -16.5, 0.9, 3.4],
+        ["youngtree", 8.8, -4.6, 0.91, 0.1],
+        ["fern", -2.6, -4.1, 0.94, 1.4],
+        ["fern", 5.7, -3.1, 1.18, 2.2],
+        ["fern", -4.4, -6.4, 0.76, 0.82],
+        ["tidegarden", -2.8, 24.5, 1.16, -0.3],
+        ["tidegarden", 8.7, 29.5, 0.83, 2.4]
+      ];
+      for (const [kind, px, pz, s, angle] of grove) if (Math.floor(px / SIZE) === x && Math.floor(pz / SIZE) === z) plant2(kind, px, pz, s, angle);
       function prey(id, px, pz, seed, depth, school, kind = type) {
         if (!fits(kind, px, pz)) return;
+        if (kind === "moth") depth = 1.15 + 2.7 * (0.5 + 0.5 * Math.sin(seed * 3.1));
         items.push({ id, type: kind, x: px, z: pz, homeX: px, homeZ: pz, y: levelFor(kind, px, pz, depth), angle: seed, seed, depth, school, live: !removed.has(id), hp: species[kind].hp, maxHP: species[kind].hp, hit: 0 });
+      }
+      if (type === "moth" && x === 0 && z === 0) {
+        prey("glade/moth/0", 4, 0.8, 0.49, 2.4);
+        prey("glade/moth/1", 6.8, 0.3, 1.35, 2.4);
       }
       if (type === "minnow") {
         if (x === 0 && z === 0) {
@@ -1139,23 +1488,7 @@
       function solid(px, pz, r, base, top) {
         solids.push({ x: px, z: pz, r, base, top });
       }
-      for (const p of props2) {
-        const b = ground(p.x, p.z), s = p.s;
-        if (p.n === 7) {
-          solid(p.x, p.z, 0.7 * s, b, b + 0.45 * s);
-        } else if (p.n === 8) {
-          solid(p.x, p.z, 0.6 * s, b, b + 1.6 * s);
-        } else if (p.n === 0) {
-          solid(p.x, p.z, 0.96 * s, b, b + 1.25 * s);
-          const a = p.x * 3.71 + p.z;
-          solid(p.x + 0.68 * s * Math.cos(a), p.z - 0.68 * s * Math.sin(a), 0.53 * s, b, b + 0.71 * s);
-        } else if (Math.abs(b) < 0.9 && p.n > 1) continue;
-        else if (b < 0 && p.n >= 4) solid(p.x, p.z, 0.72 * s, b, b + 1.85 * s);
-        else if (b >= 0 && p.n < 4) {
-          solid(p.x, p.z, 0.27 * s, b, b + 2.15 * s);
-          solid(p.x, p.z, 0.83 * s, b + 1.34 * s, b + 2.15 * s);
-        }
-      }
+      for (const p of props2) solids.push(...propColliders(p));
       for (const mark of landmarks) {
         const b = ground(mark.x, mark.z);
         if (b < 0) {
@@ -1164,14 +1497,14 @@
             const side = j * 1.05;
             solid(mark.x + side * Math.cos(yaw), mark.z - side * Math.sin(yaw), 0.65, b + (j ? Math.abs(j) * 0.56 : 0), b + 7.15 - Math.abs(j) * 0.46);
           }
-        } else solid(mark.x, mark.z, 0.82, b, b + 7.2);
+        } else solids.push(...propColliders({ kind: "rainwood", x: mark.x, z: mark.z, s: 1.2 }));
       }
       return { props: props2, items, enemies, landmarks, solids };
     }
     world2.stream = (px, pz, type) => {
       const x = Math.floor(px / SIZE), z = Math.floor(pz / SIZE), key = [x, z, type].join("/");
-      if (key === lastKey) return;
-      lastKey = key;
+      if (key === lastKey2) return;
+      lastKey2 = key;
       const needed = /* @__PURE__ */ new Set(), lists = { props: [], items: [], enemies: [], landmarks: [], solids: [] };
       for (let a = x - 2; a <= x + 2; a++) for (let b = z - 2; b <= z + 2; b++) {
         const k = [a, b, type].join("/");
@@ -1191,7 +1524,6 @@
         lists.solids.push({ x: side * 6.7, z: -80, r: 2, base: base + 7, top: base + 15 });
       }
       lists.solids.push({ x: 0, z: -80, r: 3.9, base: ground(0, -80) + 14, top: ground(0, -80) + 18 });
-      for (let i = 0; i < 32; i++) trunk(-145 + i * 9, -107 + Math.sin(i * 0.7) * 8, 1.35, 15);
       for (const actor of [...lists.items, ...lists.enemies]) {
         const s = scaleOf(actor.type), depth = actor.depth ?? (actor.type === "hunter" ? 3.3 : 2.4);
         const clear = (x2, z2) => !blocked(x2, z2, levelFor(actor.type, x2, z2, depth), 0.6 * s, 1.65 * s, lists.solids);
@@ -1232,7 +1564,14 @@
     }
     return null;
   }
-  var savedRun = readRun();
+  var visits = {
+    forest: { form: "ape", x: 3.4, z: 1.8, depth: 0.25, yaw: -0.31, angle: 0.66, pitch: 0.15, zoom: 0.8 },
+    spider: { form: "spider", x: 2.6, z: 1.3, depth: 1.2, yaw: -0.1, angle: 3.05, pitch: -0.08, zoom: 0.94 },
+    reef: { form: "fish", x: 0.8, z: 34.4, depth: 4.3, yaw: -0.35, angle: -2.65, pitch: 0.02, zoom: 0.93 }
+  };
+  var visitKey = (window.location?.hash || "").slice(1);
+  var visit = Object.hasOwn(visits, visitKey) ? visits[visitKey] : null;
+  var savedRun = visit ? null : readRun();
   var saveRevision = savedRun?.revision || 0;
   var $ = (id) => document.getElementById(id);
   var keys = /* @__PURE__ */ new Set();
@@ -1269,7 +1608,7 @@
     colony: "Your larger membrane reaches farther. Each meal expands your colony. Finish the hunt to grow fins.",
     fish: "Follow a shoal or use Find prey. Match the fish\u2019s depth before biting.",
     lungfish: "Surface to refill your air. Your fins can carry you across wet sand.",
-    spider: "A web strike briefly pins a surviving target in place.",
+    spider: "G faces a moth. Space casts up to 11 m and reels it down. Press Space again to bite.",
     bird: "Rise above rocks, then descend to the height of your prey.",
     ape: "A tool strike hits harder against ground-dwelling mites.",
     bee: "Fly just above the plants and sting the mites feeding nearby.",
@@ -1282,6 +1621,7 @@
   var shellGuard = false;
   var formTipUntil = 0;
   function saveRun() {
+    if (visit) return;
     try {
       const last2 = JSON.parse(localStorage.getItem(SAVE_KEY));
       if ((last2?.revision || 0) !== saveRevision) return;
@@ -1374,7 +1714,7 @@
     const size = bodySize(hero), swimming = hero.y + size * 0.8 < 0;
     let eye = hero.y + size * (game.firstPerson ? 1.05 : 4.05);
     if (swimming) eye = Math.min(-0.13, eye);
-    const behind = game.firstPerson ? 0 : 7.2 * Math.sqrt(size), base = game.firstPerson ? 0.055 : swimming ? 0.09 : 0.15;
+    const behind = game.firstPerson ? 0 : 7.2 * Math.sqrt(size) * (game.zoom || 1), base = game.firstPerson ? 0.055 : swimming ? 0.09 : 0.15;
     game.pitch = Math.max(-0.98, Math.min(0.96, Math.atan2(eye - a.y - bodySize(a) * 0.85, Math.hypot(dx, dz) + behind) - base));
   }
   function guideReadout() {
@@ -1416,7 +1756,7 @@
     $("xp").textContent = xp + " XP \xB7 Lv " + (1 + Math.floor(total / 3));
     $("fill").style.width = Math.min(100, 100 * kills / quota()) + "%";
     $("points").textContent = points;
-    $("verb").textContent = f.action;
+    $("verb").textContent = hero.form === "spider" && game.web?.phase === "pinned" ? "Bite moth" : f.action;
     $("evolve").hidden = !ready2;
     $("cameraBtn").textContent = game.firstPerson ? "1st person" : "3rd person";
   }
@@ -1477,6 +1817,7 @@
   function changeForm(next) {
     game.swing = null;
     game.dodge = null;
+    game.web = null;
     hero.form = next;
     kills = 0;
     hero.size = growthSize();
@@ -1548,16 +1889,16 @@
       const plate = document.createElement("canvas");
       plate.width = large ? 216 : 96;
       plate.height = Math.round(plate.width * h / w);
-      const surf = plate.getContext("2d"), pixels = surf.createImageData(plate.width, plate.height);
+      const surf = plate.getContext("2d"), pixels2 = surf.createImageData(plate.width, plate.height);
       for (let y = 0; y < plate.height; y++) for (let x = 0; x < plate.width; x++) {
         const wx = mx + (x / plate.width - 0.5) * 2 * range, wz = mz + (y / plate.height - 0.5) * 2 * range * h / w, z = ground(wx, wz);
         const color = z < -0.25 ? [35, 82, 88] : z < 0.42 ? [171, 157, 110] : [79, 101, 74];
         const contour = Math.abs(z / 1.4 - Math.round(z / 1.4)) < 0.08 ? 7 : 0, n = Math.min(14, Math.max(-12, z * 2));
         const k = (y * plate.width + x) * 4;
-        for (let a = 0; a < 3; a++) pixels.data[k + a] = color[a] + n + contour;
-        pixels.data[k + 3] = 255;
+        for (let a = 0; a < 3; a++) pixels2.data[k + a] = color[a] + n + contour;
+        pixels2.data[k + 3] = 255;
       }
-      surf.putImageData(pixels, 0, 0);
+      surf.putImageData(pixels2, 0, 0);
       m = { x: mx, z: mz, plate };
       mapBase.set(large, m);
     }
@@ -1644,6 +1985,7 @@
     if (game.defeat) return;
     panel("PAUSED", "Beneath the roots", "WASD moves. Drag the world or use Q/R to turn. F rises and C dives while swimming. Space attacks, Shift dodges, E evolves, T opens skills, M opens the atlas, and V switches camera. Drag vertically or use I/K to look up and down. G faces the nearest prey.");
     $("actions").append(button("Resume", resume));
+    if (visit) $("actions").append(button("Return to title", () => openVisit("")));
   }
   function switchCamera() {
     game.firstPerson = !game.firstPerson;
@@ -1654,6 +1996,25 @@
   function attack() {
     if (!playing || game.defeat || cooldown > 0 || clock - (game.dodge?.t ?? -1) < 0.31) return;
     const duration = learned.has("reflex") ? 0.35 : 0.54;
+    if (hero.form === "spider") {
+      const web = game.web;
+      if (web && ["flight", "reel"].includes(web.phase)) return;
+      if (web?.phase === "pinned" && web.target?.live) {
+        const moth2 = web.target;
+        game.swing = { t: clock, duration, target: moth2, reach: bodySize(hero) * 3.4, angle: hero.angle, resolved: false, webBite: true };
+        cooldown = duration;
+        return;
+      }
+      const length = silkLength(learned.has("reach")), moth = aimSilk(hero, game.items, world.solids, game.yaw, game.pitch, length);
+      if (moth || !game.enemies.some((e) => e.live && bodyDistance(e) < bodySize(hero) * 2.4 && clearStrike(hero, e, world.solids))) {
+        if (moth) hero.angle = Math.atan2(moth.x - hero.x, moth.z - hero.z);
+        game.web = castSilk(hero, moth, game.yaw, game.pitch, length, clock);
+        game.swing = { t: clock, duration, angle: hero.angle, resolved: true };
+        cooldown = duration;
+        if (!moth) say("Face a moth within " + length + " m \xB7 G finds prey");
+        return;
+      }
+    }
     const reach = bodySize(hero) * (learned.has("reach") ? 4.75 : 3.4) * (hero.form === "tree" ? 1.5 : 1);
     let target = nearest(), best = target ? bodyDistance(target) : Infinity;
     for (const e of game.enemies) {
@@ -1683,7 +2044,11 @@
     prey.hp -= (learned.has("bite") ? 2 : 1) + (hero.form === "ape" ? 1 : 0);
     prey.hit = 0.28;
     game.impact = { x: prey.x, y: prey.y + bodySize(prey) * 0.8, z: prey.z, size: bodySize(prey), type: prey.type, t: clock, killed: prey.hp <= 0 };
-    if (hero.form === "spider") prey.pinned = 1.3;
+    if (swing.webBite) {
+      prey.hp = 0;
+      game.impact.killed = true;
+      game.web = null;
+    }
     if (prey.hp > 0) {
       say("Hit \xB7 " + prey.hp + " health left");
       return;
@@ -1707,6 +2072,7 @@
     const x = side || ahead ? side : 1, z = ahead, c = Math.cos(game.yaw), s = Math.sin(game.yaw), length = Math.hypot(x, z) || 1;
     game.dodge = { t: clock, ready: clock + 1.85, side: x < 0 ? -1 : 1, dx: (x * c + z * s) / length, dz: (x * s - z * c) / length };
     game.swing = null;
+    game.web = null;
   }
   function receiveStrike(e, profile) {
     if (immunity > 0 || game.defeat || clock - (game.dodge?.t ?? -1) < 0.31) return;
@@ -1728,6 +2094,7 @@
     game.defeat = { reason, t: clock };
     game.swing = null;
     game.dodge = null;
+    game.web = null;
     health = 0;
     keys.clear();
     updateHUD();
@@ -1742,6 +2109,7 @@
     game.defeat = null;
     game.dodge = null;
     game.swing = null;
+    game.web = null;
     life++;
     hero.x = checkpoint.x;
     hero.z = checkpoint.z;
@@ -1853,6 +2221,10 @@
     game.environment = environment;
     sync();
     discovered.add(biomeAt(hero.x, hero.z).name);
+    const phase = game.web?.phase;
+    if (game.web) game.web = stepSilk(game.web, hero, world.solids, clock, dt);
+    if (game.web?.phase === "pinned" && phase !== "pinned") say("Moth reeled in \xB7 Space to bite");
+    if (hero.form === "spider") $("verb").textContent = game.web?.phase === "pinned" ? "Bite moth" : "Cast web";
     for (const a of game.items) {
       if (!a.live || distance(a) > 44) continue;
       a.hit = Math.max(0, a.hit - dt);
@@ -1863,10 +2235,10 @@
       const d = distance(a), sp = species[a.type];
       const school = a.school !== void 0, panic = school ? a.hit > 0 ? 4.7 : 2.25 : 2.7 * scaleOf(a.type);
       const fleeing = d < panic && a.type !== "blight";
-      const phase = school ? a.school : a.seed;
-      const destX = fleeing ? a.x + (a.x - hero.x) / (d || 1) * 2 : a.homeX + Math.cos(clock * 0.34 + phase) * 2.7;
-      const destZ = fleeing ? a.z + (a.z - hero.z) / (d || 1) * 2 : a.homeZ + Math.sin(clock * 0.39 + phase) * 2.7;
-      walkTo(a, a.type, destX, destZ, sp.speed * (fleeing ? 1 : 0.45) * Math.sqrt(scaleOf(a.type)), dt, a.depth + Math.sin(clock * 0.5 + phase) * 0.32);
+      const phase2 = school ? a.school : a.seed;
+      const destX = fleeing ? a.x + (a.x - hero.x) / (d || 1) * 2 : a.homeX + Math.cos(clock * 0.34 + phase2) * 2.7;
+      const destZ = fleeing ? a.z + (a.z - hero.z) / (d || 1) * 2 : a.homeZ + Math.sin(clock * 0.39 + phase2) * 2.7;
+      walkTo(a, a.type, destX, destZ, sp.speed * (fleeing ? 1 : 0.45) * Math.sqrt(scaleOf(a.type)), dt, a.depth + Math.sin(clock * 0.5 + phase2) * 0.32);
     }
     for (const e of game.enemies) {
       if (!e.live || distance(e) > 45) continue;
@@ -1889,8 +2261,7 @@
     if (clock > radioUntil) $("radio").hidden = true;
     $("fieldTip").hidden = clock > formTipUntil;
   }
-  if (savedRun) $("start").textContent = "Continue as " + forms[savedRun.form].name;
-  $("start").onclick = () => {
+  function enterWorld() {
     game.intro = false;
     game.snap = true;
     $("intro").hidden = true;
@@ -1898,6 +2269,16 @@
     $("tools").hidden = false;
     document.body.classList.add("playing");
     playing = true;
+  }
+  function openVisit(key) {
+    const page = new URL(window.location.href);
+    page.hash = key;
+    window.history.replaceState(null, "", page);
+    window.location.reload();
+  }
+  if (savedRun) $("start").textContent = "Continue as " + forms[savedRun.form].name;
+  $("start").onclick = () => {
+    enterWorld();
     if (savedRun) restoreRun(savedRun);
     else focusPrey();
     updateHUD();
@@ -1907,6 +2288,40 @@
       saveRun();
     } else radio("Green drifters ahead. Swim close and press Space to engulf one.");
   };
+  $("forestVisit").onclick = () => openVisit("forest");
+  $("reefVisit").onclick = () => openVisit("reef");
+  $("spiderVisit").onclick = () => openVisit("spider");
+  if (visit) {
+    enterWorld();
+    hero.form = visit.form;
+    hero.x = visit.x;
+    hero.z = visit.z;
+    kills = Math.floor(forms[visit.form].quota * 0.62);
+    total = kills;
+    xp = 10 * kills;
+    points = Math.floor(kills / 3);
+    swimDepth = visit.depth;
+    game.yaw = visit.yaw;
+    hero.angle = visit.angle;
+    game.pitch = visit.pitch;
+    game.zoom = visit.zoom;
+    checkpoint = { x: hero.x, z: hero.z, yaw: game.yaw, depth: swimDepth };
+    hero.size = growthSize();
+    immunity = 4;
+    sync();
+    placeForm(hero.form);
+    sync();
+    game.guide = nearest();
+    if (hero.form === "spider") {
+      focusPrey();
+      $("fieldTip").textContent = tips.spider;
+      formTipUntil = clock + 15;
+    }
+    updateHUD();
+    guideReadout();
+    $("visitReturn").hidden = false;
+  }
+  $("visitReturn").onclick = () => openVisit("");
   $("attack").onpointerdown = (e) => {
     e.preventDefault();
     keys.add(" ");
@@ -1954,6 +2369,11 @@
     };
     b.onlostpointercapture = () => keys.delete(b.dataset.key);
   }
+  $("stage").onwheel = (e) => {
+    if (!playing || game.firstPerson) return;
+    e.preventDefault();
+    game.zoom = Math.max(0.42, Math.min(1.5, (game.zoom || 1) * Math.exp(Math.max(-280, Math.min(280, e.deltaY)) * 16e-4)));
+  };
   var drag = null;
   $("stage").onpointerdown = (e) => {
     if (!playing) return;

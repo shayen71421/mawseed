@@ -1,3 +1,4 @@
+import {propColliders} from './scenery.js'
 import {habitats,species} from './ecology.js'
 import {ground,fits,levelFor,scaleOf,blocked,resolveHabitat} from './physics.js'
 export const SIZE=40
@@ -27,9 +28,31 @@ export function makeWorld(consumed=[]){
      const px=(x+hash(x,z,410+j*3))*SIZE,pz=(z+hash(x,z,411+j*3))*SIZE
      if(ground(px,pz)<-1.35)props.push({x:px,z:pz,s:.65+hash(x,z,412+j*3)*.85,n:j%3?7:8})
    }
+   function plant(kind,px,pz,s,angle){props.push({kind,x:px,z:pz,s,angle})}
+   // A jittered forest breaks into fern glades and clear approaches at the water.
+   for(let row=0;row<3;row++)for(let col=0;col<3;col++){
+    const gx=x*3+col,gz=z*3+row
+    const px=(gx+.12+.76*hash(gx,gz,503))*SIZE/3,pz=(gz+.12+.76*hash(gx,gz,504))*SIZE/3
+    const bed=ground(px,pz),variation=hash(gx,gz,505),angle=hash(gx,gz,506)*Math.PI*2
+    if(bed>1.1&&variation>.14&&!(Math.abs(px)<11&&pz>-13&&pz<5)){
+     plant(variation>.41?'rainwood':'youngtree',px,pz,.66+.70*hash(gx,gz,507),angle)
+     for(let j=0;j<3;j++){
+      const a=angle+j*2.4,offset=2.4+2.5*hash(gx,gz,510+j),fx=px+Math.cos(a)*offset,fz=pz+Math.sin(a)*offset
+      if(ground(fx,fz)>.35)plant('fern',fx,fz,.55+.82*hash(gx,gz,515+j),a)
+     }
+    }else if(bed< -4.7&&variation>.77&&Math.hypot(px,pz-32)>18)plant('tidegarden',px,pz,.67+.44*hash(gx,gz,521),angle)
+   }
+   const grove=[['rainwood',-.6,-8.4,1.09,.42],['rainwood',12.1,-13.2,1.19,2.2],['rainwood',-12.6,-16.5,.9,3.4],
+    ['youngtree',8.8,-4.6,.91,.1],['fern',-2.6,-4.1,.94,1.4],['fern',5.7,-3.1,1.18,2.2],['fern',-4.4,-6.4,.76,.82],
+    ['tidegarden',-2.8,24.5,1.16,-.3],['tidegarden',8.7,29.5,.83,2.4]]
+   for(const [kind,px,pz,s,angle] of grove)if(Math.floor(px/SIZE)===x&&Math.floor(pz/SIZE)===z)plant(kind,px,pz,s,angle)
    function prey(id,px,pz,seed,depth,school,kind=type){
      if(!fits(kind,px,pz))return
+     if(kind==='moth')depth=1.15+2.7*(.5+.5*Math.sin(seed*3.1))
      items.push({id,type:kind,x:px,z:pz,homeX:px,homeZ:pz,y:levelFor(kind,px,pz,depth),angle:seed,seed,depth,school,live:!removed.has(id),hp:species[kind].hp,maxHP:species[kind].hp,hit:0})
+   }
+   if(type==='moth'&&x===0&&z===0){
+    prey('glade/moth/0',4,.8,.49,2.4);prey('glade/moth/1',6.8,.3,1.35,2.4)
    }
    if(type==='minnow'){
      // Reproducible small schools forage at different levels of the water column.
@@ -69,18 +92,11 @@ export function makeWorld(consumed=[]){
    const biome=biomeAt((x+.5)*SIZE,(z+.5)*SIZE)
    if(hash(x,z,89)>.78)landmarks.push({x:(x+.57)*SIZE,z:(z+.21)*SIZE,type:biome.name})
    function solid(px,pz,r,base,top){solids.push({x:px,z:pz,r,base,top})}
-   for(const p of props){const b=ground(p.x,p.z),s=p.s
-     if(p.n===7){solid(p.x,p.z,.70*s,b,b+.45*s)}
-     else if(p.n===8){solid(p.x,p.z,.60*s,b,b+1.60*s)}
-     else if(p.n===0){solid(p.x,p.z,.96*s,b,b+1.25*s);const a=p.x*3.71+p.z;solid(p.x+.68*s*Math.cos(a),p.z-.68*s*Math.sin(a),.53*s,b,b+.71*s)}
-     else if(Math.abs(b)<.9&&p.n>1)continue
-     else if(b<0&&p.n>=4)solid(p.x,p.z,.72*s,b,b+1.85*s)
-     else if(b>=0&&p.n<4){solid(p.x,p.z,.27*s,b,b+2.15*s);solid(p.x,p.z,.83*s,b+1.34*s,b+2.15*s)}
-   }
+   for(const p of props)solids.push(...propColliders(p))
    for(const mark of landmarks){const b=ground(mark.x,mark.z)
     if(b<0){
      const yaw=mark.z;for(let j=-3;j<=3;j++){const side=j*1.05;solid(mark.x+side*Math.cos(yaw),mark.z-side*Math.sin(yaw),.65,b+(j?Math.abs(j)*.56:0),b+7.15-Math.abs(j)*.46)}
-    }else solid(mark.x,mark.z,.82,b,b+7.2)}
+    }else solids.push(...propColliders({kind:'rainwood',x:mark.x,z:mark.z,s:1.2}))}
    return {props,items,enemies,landmarks,solids}
  }
  world.stream=(px,pz,type)=>{
@@ -99,7 +115,6 @@ export function makeWorld(consumed=[]){
     const base=ground(0,-80);lists.solids.push({x:side*6.7,z:-80,r:2,base:base+7,top:base+15})
    }
    lists.solids.push({x:0,z:-80,r:3.9,base:ground(0,-80)+14,top:ground(0,-80)+18})
-   for(let i=0;i<32;i++)trunk(-145+i*9,-107+Math.sin(i*.7)*8,1.35,15)
    for(const actor of [...lists.items,...lists.enemies]){
      const s=scaleOf(actor.type),depth=actor.depth??(actor.type==='hunter'?3.3:2.4)
      const clear=(x,z)=>!blocked(x,z,levelFor(actor.type,x,z,depth),.6*s,1.65*s,lists.solids)

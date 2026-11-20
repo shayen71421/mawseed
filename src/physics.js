@@ -21,7 +21,7 @@ export function modeOf(id){if(['amoeba','microbe','colony','fish','cleaner','min
 export function fits(id,x,z,size=scaleOf(id)){const mode=modeOf(id),h=ground(x,z);if(mode==='water')return h<-(size*2.05+.25);if(mode==='land')return h>-.12;return true}
 export function levelFor(id,x,z,depth=2.4,s=scaleOf(id)){
  const bottom=ground(x,z),mode=modeOf(id)
- if(mode==='air')return Math.max(0,bottom)+(id==='bird'?Math.max(.5,Math.min(8,depth)):1.2)
+ if(mode==='air')return Math.max(0,bottom)+(id==='bird'?Math.max(.5,Math.min(8,depth)):id==='moth'?Math.max(.8,Math.min(5.2,depth)):1.2)
  if(mode==='water'||(mode==='both'&&bottom<-.5))return Math.max(bottom+.08,Math.min(-s*2-.09,-depth-s*.7))
  return bottom+.018
 }

@@ -187,19 +187,20 @@
   },
   "ape": {
     "asset": "ape",
-    "span": 3.144984483718872,
-    "centerY": 1.2369999885559082,
-    "tile": 192,
+    "span": 3.0111889839172363,
+    "centerY": 1.0804142951965332,
+    "tile": 384,
     "views": 8,
     "nodes": [
       "body",
+      "tail",
       "arm_-1",
       "leg_-1",
       "arm_1",
       "leg_1"
     ],
-    "vertices": 6922,
-    "triangles": 12328
+    "vertices": 65825,
+    "triangles": 76642
   },
   "worm": {
     "asset": "worm",

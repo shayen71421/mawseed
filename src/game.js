@@ -1,3 +1,4 @@
+import {aimSilk,castSilk,stepSilk,silkLength} from './silk.js'
 import {render} from './renderer.js'
 import {forms,species,traits} from './ecology.js'
 import {makeWorld,biomeAt} from './chunks.js'
@@ -17,7 +18,13 @@ function readRun(){
  }catch{}
  return null
 }
-const savedRun=readRun()
+const visits={
+ forest:{form:'ape',x:3.4,z:1.8,depth:.25,yaw:-.31,angle:.66,pitch:.15,zoom:.80},
+ spider:{form:'spider',x:2.6,z:1.3,depth:1.2,yaw:-.1,angle:3.05,pitch:-.08,zoom:.94},
+ reef:{form:'fish',x:.8,z:34.4,depth:4.3,yaw:-.35,angle:-2.65,pitch:.02,zoom:.93}
+}
+const visitKey=(window.location?.hash||'').slice(1),visit=Object.hasOwn(visits,visitKey)?visits[visitKey]:null
+const savedRun=visit?null:readRun()
 let saveRevision=savedRun?.revision||0
 const $=id=>document.getElementById(id),keys=new Set(),world=makeWorld(savedRun?.consumed)
 const hero={x:0,z:36,y:0,angle:0,form:'amoeba',player:true,size:scaleOf('amoeba')*.68},partner={x:-4,z:29,y:0,angle:0,form:'amoeba',mode:'scout',timer:24,waypoint:0}
@@ -31,7 +38,7 @@ const tips={
  colony:'Your larger membrane reaches farther. Each meal expands your colony. Finish the hunt to grow fins.',
  fish:'Follow a shoal or use Find prey. Match the fish’s depth before biting.',
  lungfish:'Surface to refill your air. Your fins can carry you across wet sand.',
- spider:'A web strike briefly pins a surviving target in place.',
+ spider:'G faces a moth. Space casts up to 11 m and reels it down. Press Space again to bite.',
  bird:'Rise above rocks, then descend to the height of your prey.',
  ape:'A tool strike hits harder against ground-dwelling mites.',
  bee:'Fly just above the plants and sting the mites feeding nearby.',
@@ -43,6 +50,7 @@ const tips={
 }
 let shellGuard=false,formTipUntil=0
 function saveRun(){
+ if(visit)return
  try{
   const last=JSON.parse(localStorage.getItem(SAVE_KEY))
   if((last?.revision||0)!==saveRevision)return
@@ -85,7 +93,7 @@ function focusPrey(){
  const size=bodySize(hero),swimming=hero.y+size*.8<0
  let eye=hero.y+size*(game.firstPerson?1.05:4.05)
  if(swimming)eye=Math.min(-.13,eye)
- const behind=game.firstPerson?0:7.2*Math.sqrt(size),base=game.firstPerson?.055:swimming?.09:.15
+ const behind=game.firstPerson?0:7.2*Math.sqrt(size)*(game.zoom||1),base=game.firstPerson?.055:swimming?.09:.15
  game.pitch=Math.max(-.98,Math.min(.96,Math.atan2(eye-a.y-bodySize(a)*.85,Math.hypot(dx,dz)+behind)-base))
 }
 function guideReadout(){
@@ -111,7 +119,7 @@ function updateHUD(){
  $('counter').textContent=Math.min(kills,quota())+' / '+quota()+' kills'
  $('xp').textContent=xp+' XP · Lv '+(1+Math.floor(total/3))
  $('fill').style.width=Math.min(100,100*kills/quota())+'%';$('points').textContent=points
- $('verb').textContent=f.action;$('evolve').hidden=!ready
+ $('verb').textContent=hero.form==='spider'&&game.web?.phase==='pinned'?'Bite moth':f.action;$('evolve').hidden=!ready
  $('cameraBtn').textContent=game.firstPerson?'1st person':'3rd person'
 }
 function button(label,fn){const b=document.createElement('button');b.textContent=label;b.onclick=fn;return b}
@@ -139,7 +147,7 @@ function placeForm(next,safe=false){
  hero.y=playerLevel(next,hero.x,hero.z,swimDepth,size);game.snap=true;return shifted
 }
 function changeForm(next){
- game.swing=null;game.dodge=null
+ game.swing=null;game.dodge=null;game.web=null
  hero.form=next;kills=0;hero.size=growthSize();shellGuard=next==='snail';swimDepth=next==='lungfish'?.25:2.4
  reserve=1;exposure=0;game.meal=null;game.guide=null;game.pinnedPrey=null;game.pitch=0
  formTipUntil=clock+7;$('fieldTip').textContent=tips[next];health=maxHealth();cooldown=0;immunity=2
@@ -196,11 +204,30 @@ function atlas(){if(game.defeat)return;panel('EXPLORATION','Habitat atlas','The 
  const canvas=document.createElement('canvas');canvas.width=520;canvas.height=280;canvas.id='atlas';$('panel').append(canvas);chart(canvas,120,true)
  const p=document.createElement('p');p.textContent='Discovered habitats · '+[...discovered].join(' / ');$('panel').append(p);$('actions').append(button('Return to world',resume))}
 function pause(){if(game.defeat)return;panel('PAUSED','Beneath the roots','WASD moves. Drag the world or use Q/R to turn. F rises and C dives while swimming. Space attacks, Shift dodges, E evolves, T opens skills, M opens the atlas, and V switches camera. Drag vertically or use I/K to look up and down. G faces the nearest prey.')
- $('actions').append(button('Resume',resume))}
+ $('actions').append(button('Resume',resume))
+ if(visit)$('actions').append(button('Return to title',()=>openVisit('')))
+}
 function switchCamera(){game.firstPerson=!game.firstPerson;game.snap=true;updateHUD();say(game.firstPerson?'First person · Drag or Q/R to look':'Third person')}
 function attack(){
  if(!playing||game.defeat||cooldown>0||clock-(game.dodge?.t??-1)<.31)return
  const duration=learned.has('reflex')?.35:.54
+ if(hero.form==='spider'){
+  const web=game.web
+  if(web&&['flight','reel'].includes(web.phase))return
+  if(web?.phase==='pinned'&&web.target?.live){
+   const moth=web.target
+   game.swing={t:clock,duration,target:moth,reach:bodySize(hero)*3.4,angle:hero.angle,resolved:false,webBite:true}
+   cooldown=duration;return
+  }
+  const length=silkLength(learned.has('reach')),moth=aimSilk(hero,game.items,world.solids,game.yaw,game.pitch,length)
+  if(moth||!game.enemies.some(e=>e.live&&bodyDistance(e)<bodySize(hero)*2.4&&clearStrike(hero,e,world.solids))){
+   if(moth)hero.angle=Math.atan2(moth.x-hero.x,moth.z-hero.z)
+   game.web=castSilk(hero,moth,game.yaw,game.pitch,length,clock)
+   game.swing={t:clock,duration,angle:hero.angle,resolved:true};cooldown=duration
+   if(!moth)say('Face a moth within '+length+' m · G finds prey')
+   return
+  }
+ }
  const reach=bodySize(hero)*(learned.has('reach')?4.75:3.4)*(hero.form==='tree'?1.5:1)
  let target=nearest(),best=target?bodyDistance(target):Infinity
  for(const e of game.enemies){
@@ -220,7 +247,7 @@ function landAttack(){
  if(!clearStrike(hero,prey,world.solids)){say('Blocked · move around the obstacle');return}
  prey.hp-=(learned.has('bite')?2:1)+(hero.form==='ape'?1:0);prey.hit=.28
  game.impact={x:prey.x,y:prey.y+bodySize(prey)*.8,z:prey.z,size:bodySize(prey),type:prey.type,t:clock,killed:prey.hp<=0}
- if(hero.form==='spider')prey.pinned=1.3
+ if(swing.webBite){prey.hp=0;game.impact.killed=true;game.web=null}
  if(prey.hp>0){say('Hit · '+prey.hp+' health left');return}
  const hostile=Boolean(prey.predator)
  game.meal={x:prey.x,y:prey.y,z:prey.z,angle:prey.angle,type:prey.type,t:clock,hostile}
@@ -235,7 +262,7 @@ function dodge(){
  const side=Number(keys.has('d'))-Number(keys.has('a')),ahead=Number(keys.has('w'))-Number(keys.has('s'))
  const x=side||ahead?side:1,z=ahead,c=Math.cos(game.yaw),s=Math.sin(game.yaw),length=Math.hypot(x,z)||1
  game.dodge={t:clock,ready:clock+1.85,side:x<0?-1:1,dx:(x*c+z*s)/length,dz:(x*s-z*c)/length}
- game.swing=null
+ game.swing=null;game.web=null
 }
 function receiveStrike(e,profile){
  if(immunity>0||game.defeat||clock-(game.dodge?.t??-1)<.31)return
@@ -246,14 +273,14 @@ function receiveStrike(e,profile){
 }
 function die(reason){
  if(game.defeat)return
- game.defeat={reason,t:clock};game.swing=null;game.dodge=null;health=0;keys.clear();updateHUD();saveRun()
+ game.defeat={reason,t:clock};game.swing=null;game.dodge=null;game.web=null;health=0;keys.clear();updateHUD();saveRun()
 }
 function finishDefeat(){
  panel('REBIRTH',game.defeat.reason,'Your '+form().name+' returns to its evolution checkpoint with its size, hunt progress and skills.')
  $('actions').append(button('Respawn as '+form().name,newLife));saveRun()
 }
 function newLife(){
- game.defeat=null;game.dodge=null;game.swing=null
+ game.defeat=null;game.dodge=null;game.swing=null;game.web=null
  life++;hero.x=checkpoint.x;hero.z=checkpoint.z;swimDepth=checkpoint.depth;game.yaw=checkpoint.yaw;game.pitch=0
  hero.size=growthSize();health=maxHealth();immunity=5;reserve=1;exposure=0;shellGuard=hero.form==='snail';cooldown=0;damageUntil=0
  game.meal=null;game.impact=null;game.guide=null;game.pinnedPrey=null;guideAt=0
@@ -316,6 +343,10 @@ function simulation(dt){
  breathe(dt,environment);if(game.defeat)return
  game.environment=environment
  sync();discovered.add(biomeAt(hero.x,hero.z).name)
+ const phase=game.web?.phase
+ if(game.web)game.web=stepSilk(game.web,hero,world.solids,clock,dt)
+ if(game.web?.phase==='pinned'&&phase!=='pinned')say('Moth reeled in · Space to bite')
+ if(hero.form==='spider')$('verb').textContent=game.web?.phase==='pinned'?'Bite moth':'Cast web'
  for(const a of game.items){
    if(!a.live||distance(a)>44)continue
    a.hit=Math.max(0,a.hit-dt);if(a.pinned>0){a.pinned-=dt;continue}const d=distance(a),sp=species[a.type]
@@ -343,13 +374,33 @@ function simulation(dt){
  if(clock>radioUntil)$('radio').hidden=true
  $('fieldTip').hidden=clock>formTipUntil
 }
+function enterWorld(){
+ game.intro=false;game.snap=true;$('intro').hidden=true;$('hud').hidden=false;$('tools').hidden=false;document.body.classList.add('playing');playing=true
+}
+function openVisit(key){
+ const page=new URL(window.location.href);page.hash=key
+ window.history.replaceState(null,'',page);window.location.reload()
+}
 if(savedRun)$('start').textContent='Continue as '+forms[savedRun.form].name
 $('start').onclick=()=>{
- game.intro=false;game.snap=true;$('intro').hidden=true;$('hud').hidden=false;$('tools').hidden=false;document.body.classList.add('playing');playing=true
+ enterWorld()
  if(savedRun)restoreRun(savedRun)
  else focusPrey()
  updateHUD();if(savedRun){say('Evolution checkpoint restored');guideReadout();saveRun()}else radio('Green drifters ahead. Swim close and press Space to engulf one.')
 }
+$('forestVisit').onclick=()=>openVisit('forest')
+$('reefVisit').onclick=()=>openVisit('reef')
+$('spiderVisit').onclick=()=>openVisit('spider')
+if(visit){
+ enterWorld();hero.form=visit.form;hero.x=visit.x;hero.z=visit.z;kills=Math.floor(forms[visit.form].quota*.62)
+ total=kills;xp=10*kills;points=Math.floor(kills/3)
+ swimDepth=visit.depth;game.yaw=visit.yaw;hero.angle=visit.angle;game.pitch=visit.pitch;game.zoom=visit.zoom
+ checkpoint={x:hero.x,z:hero.z,yaw:game.yaw,depth:swimDepth}
+ hero.size=growthSize();immunity=4;sync();placeForm(hero.form);sync()
+ game.guide=nearest();if(hero.form==='spider'){focusPrey();$('fieldTip').textContent=tips.spider;formTipUntil=clock+15}
+ updateHUD();guideReadout();$('visitReturn').hidden=false
+}
+$('visitReturn').onclick=()=>openVisit('')
 $('attack').onpointerdown=e=>{e.preventDefault();keys.add(' ');e.currentTarget.setPointerCapture(e.pointerId);attack()};$('attack').onlostpointercapture=()=>keys.delete(' ')
 $('dodge').onclick=dodge
 $('findPrey').onclick=()=>{if(playing)focusPrey();$('findPrey').blur()};$('pause').onclick=pause;$('skillsBtn').onclick=skills;$('mapBtn').onclick=atlas;$('cameraBtn').onclick=switchCamera;$('close').onclick=resume;$('evolve').onclick=evolve
@@ -363,6 +414,10 @@ window.addEventListener('keydown',e=>{
 })
 window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>keys.clear())
 for(const b of document.querySelectorAll('[data-key]')){b.onpointerdown=e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.add(b.dataset.key)};b.onlostpointercapture=()=>keys.delete(b.dataset.key)}
+$('stage').onwheel=e=>{
+ if(!playing||game.firstPerson)return
+ e.preventDefault();game.zoom=Math.max(.42,Math.min(1.5,(game.zoom||1)*Math.exp(Math.max(-280,Math.min(280,e.deltaY))*.0016)))
+}
 let drag=null
 $('stage').onpointerdown=e=>{if(!playing)return;drag={x:e.clientX,y:e.clientY};e.currentTarget.setPointerCapture(e.pointerId)}
 $('stage').onpointermove=e=>{if(drag!==null){game.yaw+=(e.clientX-drag.x)*.009;game.pitch=Math.max(-.98,Math.min(.96,game.pitch+(e.clientY-drag.y)*.006));drag={x:e.clientX,y:e.clientY}}}

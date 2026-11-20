@@ -1,4 +1,5 @@
-"""Build repeatable 512² mineral, sediment and forest materials. All fields are periodic."""
+"""Build the prop materials and the higher-resolution coastal terrain surfaces."""
+import runpy
 from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -54,19 +55,14 @@ def save(key, rgb, h, strength):
     Image.fromarray(np.uint8((n * 0.5 + 0.5) * 255)).save(D / f'{key}-normal.webp', quality=95, method=5)
     if key in ('stone', 'bark'):
         Image.fromarray(np.uint8(np.clip(rgb, 0, 255))).save('/tmp/habitat-' + key + '.jpg', quality=90)
-for key in ['bed', 'shore']:
-    low = earth()
-    fine = noise(0.42)
-    shape = noise(22)
-    rip = 0.5 + 0.5 * np.cos(TAU * (Y * (10 if key == 'bed' else 6) + X * 2) + 0.73 * shape + 2.5 * np.sin(TAU * X))
-    crest = rip ** 2.8
-    grit, fleck = grains(1100 if key == 'bed' else 650, 1.0, 4.0)
-    # Clear bed alternates dark organic silt, grey-green grit and thin amber ridges.
-    colors = ((42, 65, 62), (136, 147, 111)) if key == 'bed' else ((151, 132, 103), (218, 206, 166))
-    rgb = mix(*colors, 0.46 + 0.13 * low + 0.19 * crest + 0.045 * fine)
-    mica = np.maximum(0, noise(0.36) - 1.34) * 0.15
-    rgb += np.expand_dims(11 * noise(1.45) + fleck * 38 + mica * 70, 2)
-    save(key, rgb, 0.13 * fine + 0.38 * grit + 0.67 * crest + 0.15 * noise(3), 1.1)
+# Preserve each shipped prop texture's PCG64 stream independently of other bakes.
+def prop_stream(state):
+    snapshot = rng.bit_generator.state
+    snapshot['state']['state'] = state
+    snapshot['has_uint32'] = 0
+    rng.bit_generator.state = snapshot
+
+prop_stream(76381483580717637138388977423648479590)
 rock = earth()
 crystal = noise(1.45)
 grit, fleck = grains(370, 1.1, 5.5)
@@ -76,15 +72,7 @@ rgb = mix((47, 59, 61), (126, 126, 109), 0.45 + 0.2 * rock + 0.1 * crystal)
 rgb = mix(rgb, (167, 166, 137), veins * 0.49)
 rgb += (fleck * 20 + 7 * noise(0.5))[:, :, None]
 save('stone', rgb, 0.93 * rock + 0.29 * crystal + 0.17 * noise(0.4) + 0.21 * grit + 0.29 * veins, 0.97)
-broad = earth()
-clumps = noise(6)
-spor = noise(0.9)
-under = smooth(-broad * 0.65 + 0.18)
-rgb = mix((43, 56, 32), (138, 151, 69), 0.37 + 0.12 * broad + 0.14 * clumps + 0.14 * spor)
-rgb = mix(rgb, (87, 70, 47), under * 0.76)
-twigs = np.exp(-np.abs(np.sin(TAU * (X * 6 - Y * 4) + 2.1 * noise(16))) * 27) * np.clip(under + 0.15, 0, 0.75)
-rgb = mix(rgb, (147, 125, 72), twigs)
-save('moss', rgb, 0.54 * clumps + 0.18 * noise(1) + 0.33 * spor + 0.56 * twigs, 1.55)
+prop_stream(339641538373406406025612572989604339172)
 coarse = noise(26)
 fine = noise(2)
 phase = TAU * X * 20 + 0.78 * np.sin(TAU * Y * 2) + 0.43 * coarse
@@ -95,3 +83,5 @@ rgb = mix((52, 46, 38), (133, 120, 82), 0.17 + 0.52 * ridge + 0.08 * coarse + 0.
 rgb = mix(rgb, (40, 39, 33), split * 0.68)
 rgb = mix(rgb, (102, 122, 81), smooth(0.18 + coarse * 0.35) * 0.42)
 save('bark', rgb, 1.45 * ridge - 0.6 * split + 0.19 * fibers + 0.1 * noise(1.25), 1.3)
+
+runpy.run_path(str(Path(__file__).with_name('coastal-ground.py')), run_name='__main__')

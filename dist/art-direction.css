@@ -32,3 +32,6 @@ nav button,#attack,#depthControls button{border-radius:4px;background:var(--pane
 #fightControls button{position:static;touch-action:none;border:1px solid var(--line);background:var(--panel);border-radius:4px}
 #dodge:disabled{opacity:.58}#dodge kbd{margin-right:3px}
 @media(max-width:660px){#fightControls{right:2%;gap:3px}#fightControls button{padding:8px}#dodge kbd{display:none}}
+
+.habitatVisits{display:flex;gap:10px;margin:14px 0 0}.habitatVisits button{border-radius:3px;background:#10252ac9;border-color:#998f71;color:#ece4cf;font-size:13px}
+@media(max-width:660px){.playing header:has(#visitReturn:not([hidden])) .mark{display:none}.playing header:has(#visitReturn:not([hidden])){justify-content:flex-end}}

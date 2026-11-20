@@ -44,7 +44,7 @@ def export(m,kind,out,raster):
   n=len(doc['nodes']);doc['scenes'][0]['nodes'].append(n);doc['meshes'].append({'primitives':[pr]});doc['nodes'].append({'name':g,'mesh':n,'translation':pivot.tolist()})
  doc['buffers'][0]['byteLength']=len(buf);j=json.dumps(doc,separators=(',',':')).encode();j+=b' '*((-len(j))%4)
  (out/(kind+'.glb')).write_bytes(struct.pack('<4sII',b'glTF',2,28+len(j)+len(buf))+struct.pack('<I4s',len(j),b'JSON')+j+struct.pack('<I4s',len(buf),b'BIN\0')+buf)
- size=288 if kind in ('amoeba','colony','fish','hunter') else 192
+ size=384 if kind=='ape' else 288 if kind in ('amoeba','colony','fish','hunter') else 192
  resolution=size*2
  y=(V[:,1].max()+V[:,1].min())*.5
  center=f32([0,y,0]);rad=np.linalg.norm(V[:,[0,2]],axis=1).max()

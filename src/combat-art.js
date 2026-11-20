@@ -46,7 +46,7 @@ export function drawCombat(ctx,project,game,time){
  const hero=game.hero,swing=game.swing
  if(swing){
   const u=(time-swing.t)/swing.duration,move=moves[hero.form]
-  if(u>.24&&u<1){const v=(u-.24)/.76;sweep(ctx,project,{...hero,angle:swing.angle},move,v,Math.sin(Math.PI*v),colors[move]||'#e7dfb9',bodySize(hero),['engulf','divide','silk','snap','stoop'].includes(move))}
+  if((move!=='silk'||swing.webBite)&&u>.24&&u<1){const v=(u-.24)/.76;sweep(ctx,project,{...hero,angle:swing.angle},move,v,Math.sin(Math.PI*v),colors[move]||'#e7dfb9',bodySize(hero),['engulf','divide','silk','snap','stoop'].includes(move))}
  }
  for(const e of game.enemies){
   if(!e.live||!e.phase||e.phase==='stalk'||Math.hypot(e.x-hero.x,e.z-hero.z)>13||!clearStrike(hero,e,game.world.solids))continue

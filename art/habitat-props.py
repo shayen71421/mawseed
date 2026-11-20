@@ -324,13 +324,14 @@ def lamp(name, pos, color, power, size):
     obj.location = pos
     return obj
 
-def export(name):
+def export(name, resolution=384, write_model=True):
     scene = bpy.context.scene
     obs = geometry()
     for o in obs:
         o.select_set(True)
     bpy.context.view_layer.objects.active = obs[0]
-    bpy.ops.export_scene.gltf(filepath=str(D / (name + '.glb')), export_format='GLB', use_selection=True, export_yup=True, export_apply=True, export_extras=False)
+    if write_model:
+        bpy.ops.export_scene.gltf(filepath=str(D / (name + '.glb')), export_format='GLB', use_selection=True, export_yup=True, export_apply=True, export_extras=False)
     points = [Vector(p) for Verts in vertices.values() for p in Verts]
     low = Vector([min((p[i] for p in points)) for i in range(3)])
     high = Vector([max((p[i] for p in points)) for i in range(3)])
@@ -370,8 +371,8 @@ def export(name):
     scene.render.threads_mode = 'FIXED'
     scene.render.threads = 3
     scene.render.film_transparent = True
-    scene.render.resolution_x = 384
-    scene.render.resolution_y = 384
+    scene.render.resolution_x = resolution
+    scene.render.resolution_y = resolution
     scene.render.resolution_percentage = 100
     scene.render.image_settings.color_mode = 'RGBA'
     scene.render.filepath = '/tmp/habitat-' + name + '.png'

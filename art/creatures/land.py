@@ -1,4 +1,5 @@
 from build import *
+from macaque import macaque
 def feather(m,A,B,width,color,group):
  A=np.array(A);B=np.array(B);d=B-A;side=unit(np.array([d[2],0,-d[0]]));u=np.linspace(0,1,16)
  half=width*np.sin(PI*u)**.73*(1-u*.35);center=A+u[:,None]*d;center[:,1]+=.075*np.sin(PI*u)
@@ -93,36 +94,6 @@ def annelid(m,k):
  for j in range(count):
   t=j/(count-1);z=(t-.5)*2.26;x=.17*math.sin(t*2.1*PI+.4);y=.22+.12*math.sin(t*1.3*PI)**2;r=.05+.133*(math.sin(PI*t)**.38);r*=1.19 if .65<t<.80 else 1
   m.orb((x,y,z),(r,r*(.69 if leech else .87),.086 if j not in [0,count-1] else .064),mix(col,'e4ac82',.12*(j%2)+(.24 if .65<t<.80 else 0)),rot=(0,.34*math.cos(t*PI*2),0),rough=.33,seg=16,ring=8,group='tail' if j<8 else 'body')
-def primate(m,k):
- fur='735845';tan='b48e68';dark='52493f'
- m.orb((0,1.25,-.08),(.48,.69,.37),fur,rough=.79,seg=24,ring=15);m.orb((0,1.57,.04),(.59,.44,.37),fur,rough=.76);m.orb((0,1.39,.24),(.36,.41,.12),tan,rough=.72)
- m.orb((0,2.02,.16),(.34,.40,.30),fur,rough=.71,seg=24,ring=15);m.orb((0,1.99,.38),(.28,.26,.15),tan,rough=.57)
- m.orb((0,1.91,.48),(.20,.13,.14),tan);m.orb((0,2.04,.504),(.12,.075,.066),dark)
- for s in [-1,1]:
-  m.orb((s*.325,2.04,.11),(.095,.145,.125),tan);m.orb((s*.35,2.05,.14),(.07,.085,.07),dark)
-  m.orb((s*.124,2.14,.457),(.067,.048,.045),'282e29',rough=.2);m.orb((s*.122,2.158,.488),(.016,.014,.01),'eee2c3')
-  m.strand([(s*.015,2.18,.46),(s*.13,2.215,.455),(s*.23,2.19,.39)],[.039,.056,.024],fur,8,7)
-  arm_start=len(m.parts)
-  m.strand([(s*.39,1.70,.015),(s*.63,1.57,.015),(s*.76,1.21,.09),(s*.81,.84,.30)],[.225,.204,.145,.101],fur,14,11)
-  m.orb((s*.82,.78,.33),(.123,.13,.109),tan)
-  for j in range(4):
-   m.strand([(s*(.75+.042*j),.77,.37),(s*(.75+.043*j),.65,.40),(s*(.75+.044*j),.62,.37)],[.025,.023,.012],tan,6,6)
-  # Deltoid, forearm and hand have mass behind each knuckle.
-  m.orb((s*.522,1.639,.025),(.223,.212,.205),fur,rough=.79)
-  m.orb((s*.788,1.068,.20),(.151,.260,.153),fur,rot=(-.32,0,s*-.12),rough=.74)
-  m.strand([(s*.748,.799,.326),(s*.708,.749,.39),(s*.71,.698,.405)],[.056,.042,.018],tan,7,7)
-  for j in range(3):
-   m.orb((s*(.763+j*.042),.762,.409),(.03,.041,.034),mix(tan,'876952',.30),seg=9,ring=6)
-  if s==1:m.strand([(.82,.12,.49),(.84,.66,.43),(.83,1.09,.38),(.88,1.61,.39)],[.046,.043,.033,.024],'775a40',12,8,ribs=9)
-  m.joint(arm_start,f'arm_{s}',(s*.39,1.70,.015))
-  leg_start=len(m.parts)
-  m.strand([(s*.28,.99,-.07),(s*.33,.67,.06),(s*.31,.36,-.07),(s*.31,.14,-.09)],[.192,.139,.105,.073],fur,12,10)
-  m.orb((s*.31,.13,.036),(.125,.076,.21),tan)
-  for j in range(3):
-   m.orb((s*(.25+j*.045),.108,.188),(.035,.036,.073),tan,seg=9,ring=6)
-  m.joint(leg_start,f'leg_{s}',(s*.28,.99,-.07))
-  for j in range(14):
-   a=j*.45;m.strand([(s*(.45+.063*math.sin(a)),1.53+.12*math.cos(a),.19*math.sin(a)),(s*(.54+.07*math.sin(a)),1.39+.12*math.cos(a),.22*math.sin(a))],[.021,.003],mix(fur,tan,.32),4,5)
 def plant(m,k):
  tree=k=='tree';wood='7b6750';height=2.5 if tree else 1.56;w=.18 if tree else .084
  for j in range(6):
@@ -147,7 +118,7 @@ def land(m,k):
  elif k in ('bee','moth'):insect(m,k)
  elif k=='snail':gastropod(m)
  elif k in ('worm','leech'):annelid(m,k)
- elif k=='ape':primate(m,k)
+ elif k=='ape':macaque(m)
  elif k in ('tree','sapling'):plant(m,k)
  elif k=='blight':blight(m)
  else:raise ValueError(k)
