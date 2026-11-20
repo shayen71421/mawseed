@@ -60,3 +60,19 @@ npm ci
 node --test
 npm run build
 ```
+
+## Deploy on Vercel
+
+In the Vercel dashboard, choose **Add New → Project** and import `shayen71421/mawseed` from GitHub. Use these settings and select **Deploy**.
+
+| Setting | Value |
+| --- | --- |
+| Framework Preset | Other |
+| Root Directory | Repository root (`.`) |
+| Install Command | `npm ci` |
+| Build Command | `npm run build` |
+| Output Directory | `dist` |
+
+The 3D models, textures and browser bundles are served from `dist/`. The game runs entirely in the browser and saves progress on the device. A player visiting the new Vercel address starts a separate save from the one on the original hosted site.
+
+[Vercel build settings](https://vercel.com/docs/builds/configure-a-build)
